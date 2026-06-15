@@ -610,7 +610,6 @@ void AP_CompanionComputer::send_data()
     }
 }
 
-
 AP_CompanionComputer *AP_CompanionComputer::_singleton;
 
 namespace AP
