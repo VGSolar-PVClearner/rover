@@ -14,37 +14,37 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @User: Standard
     AP_GROUPINFO("PUMP_PWR", 0, AP_SuctionCup, _pump_pwr, 100),
 
-    // @Param: LIFT_DELAY_MS
+    // @Param: LIFT_DLY_MS
     // @DisplayName: Lift servo settle time
     // @Description: Time to wait after commanding lift servo before next suction step
     // @Units: ms
     // @Range: 100 5000
     // @User: Standard
-    AP_GROUPINFO("LIFT_DELAY_MS", 1, AP_SuctionCup, _lift_delay_ms, 500),
+    AP_GROUPINFO("LIFT_DLY_MS", 1, AP_SuctionCup, _lift_delay_ms, 500),
 
-    // @Param: VACUUM_DELAY_MS
+    // @Param: VAC_DLY_MS
     // @DisplayName: Vacuum build time
     // @Description: Time to wait after starting pump before suction is considered ready
     // @Units: ms
     // @Range: 100 10000
     // @User: Standard
-    AP_GROUPINFO("VACUUM_DELAY_MS", 2, AP_SuctionCup, _vacuum_delay_ms, 800),
+    AP_GROUPINFO("VAC_DLY_MS", 2, AP_SuctionCup, _vacuum_delay_ms, 800),
 
-    // @Param: VENT_DELAY_MS
+    // @Param: VENT_DLY_MS
     // @DisplayName: Vent delay before lift
     // @Description: Time to wait after opening valve before raising lift servo
     // @Units: ms
     // @Range: 100 5000
     // @User: Standard
-    AP_GROUPINFO("VENT_DELAY_MS", 3, AP_SuctionCup, _vent_delay_ms, 400),
+    AP_GROUPINFO("VENT_DLY_MS", 3, AP_SuctionCup, _vent_delay_ms, 400),
 
-    // @Param: ACT_TIMEOUT_MS
+    // @Param: ACT_TOUT_MS
     // @DisplayName: Suction action timeout
     // @Description: Maximum time allowed for a lower or raise sequence before fault
     // @Units: ms
     // @Range: 1000 30000
     // @User: Standard
-    AP_GROUPINFO("ACT_TIMEOUT_MS", 4, AP_SuctionCup, _action_timeout_ms, 5000),
+    AP_GROUPINFO("ACT_TOUT_MS", 4, AP_SuctionCup, _action_timeout_ms, 5000),
 
     // @Param: LIFT_PWM_R
     // @DisplayName: Lift PWM raised
@@ -62,21 +62,21 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("LIFT_PWM_L", 6, AP_SuctionCup, _lift_pwm_lowered, 2000),
 
-    // @Param: VALVE_PWM_V
+    // @Param: VLV_PWM_V
     // @DisplayName: Valve PWM vent
     // @Description: PWM pulse width in microseconds for venting (release vacuum)
     // @Units: us
     // @Range: 1000 2000
     // @User: Advanced
-    AP_GROUPINFO("VALVE_PWM_V", 7, AP_SuctionCup, _valve_pwm_vent, 1000),
+    AP_GROUPINFO("VLV_PWM_V", 7, AP_SuctionCup, _valve_pwm_vent, 1000),
 
-    // @Param: VALVE_PWM_S
+    // @Param: VLV_PWM_S
     // @DisplayName: Valve PWM seal
     // @Description: PWM pulse width in microseconds for sealing vacuum line
     // @Units: us
     // @Range: 1000 2000
     // @User: Advanced
-    AP_GROUPINFO("VALVE_PWM_S", 8, AP_SuctionCup, _valve_pwm_seal, 2000),
+    AP_GROUPINFO("VLV_PWM_S", 8, AP_SuctionCup, _valve_pwm_seal, 2000),
 
     AP_GROUPEND
 };
@@ -257,6 +257,11 @@ void AP_SuctionCup::clear_fault()
     }
 
     log_status(true);
+}
+
+void AP_SuctionCup::unfreeze()
+{
+    _frozen = false;
 }
 
 bool AP_SuctionCup::is_busy() const
