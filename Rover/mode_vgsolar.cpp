@@ -409,6 +409,10 @@ void ModeVGSolar::read_companion_commands()
             _vg_submode = VGSubMode::YAW;
             _target_yaw_cd = cmd.yaw_data;
         } else if (cmd.control_mode == SPEED_MODE_YAWRATE) {
+            if (_vg_submode == VGSubMode::YAW) {
+                // 从航向角模式切到角速度模式，清掉角速度 PID 积分避免残留打舵
+                attitude_control.relax_I();
+            }
             _vg_submode = VGSubMode::YAWRATE;
             _target_yaw_rate_cds = cmd.yaw_data;
         }
@@ -429,8 +433,16 @@ void ModeVGSolar::update_yaw()
 
 void ModeVGSolar::update_yawrate()
 {
-    // 复用 ModeGuided 的 TurnRateAndSpeed 能力
-    set_desired_turn_rate_and_speed(_target_yaw_rate_cds, _target_speed_ms);
+    // NCU 协议角速度正=左转；ArduPilot get_steering_out_rate 正=右转
+    const float turn_rate_cds = -_target_yaw_rate_cds;
+
+    if (is_zero(_target_speed_ms) && is_zero(turn_rate_cds)) {
+        attitude_control.relax_I();
+        stop_vehicle();
+        return;
+    }
+
+    set_desired_turn_rate_and_speed(turn_rate_cds, _target_speed_ms);
     ModeGuided::update();
 }
 
@@ -593,7 +605,8 @@ void ModeVGSolar::update_turn()
             _turn_phase = TurnPhase::RAISE_SUCTION;
             _turn_phase_start_ms = now;
         } else {
-            const float dir_sign = (_turn_direction == TURN_DIR_LEFT) ? 1.0f : -1.0f;
+            // 协议左转=正；ArduPilot 角速度正=右转
+            const float dir_sign = (_turn_direction == TURN_DIR_LEFT) ? -1.0f : 1.0f;
             const float turn_rate_cds = _turn_angular_vel_dps * 100.0f * dir_sign;
             const float speed_ms = (_turn_mode_type == TURN_MODE_SPOT) ? 0.0f : _turn_max_speed;
             set_desired_turn_rate_and_speed(turn_rate_cds, speed_ms);
