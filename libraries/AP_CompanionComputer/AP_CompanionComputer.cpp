@@ -479,6 +479,25 @@ uint8_t AP_CompanionComputer::compute_motion_state(int16_t velocity_cms, bool es
     return uint8_t(MotionState::STOPPED);
 }
 
+// AP_GPS 枚举与 protocol（0=无定位, 1=2D, 2=3D, 3=RTK固定）不同，上报前需映射
+static uint8_t map_gps_status_to_protocol(AP_GPS::GPS_Status status)
+{
+    switch (status) {
+    case AP_GPS::GPS_OK_FIX_2D:
+        return 1;
+    case AP_GPS::GPS_OK_FIX_3D:
+    case AP_GPS::GPS_OK_FIX_3D_DGPS:
+    case AP_GPS::GPS_OK_FIX_3D_RTK_FLOAT:  // 浮点 RTK 仍视为 3D
+        return 2;
+    case AP_GPS::GPS_OK_FIX_3D_RTK_FIXED:
+        return 3;
+    case AP_GPS::NO_GPS:
+    case AP_GPS::NO_FIX:
+    default:
+        return 0;
+    }
+}
+
 void AP_CompanionComputer::send_data()
 {
     if (!_enable || _uart == nullptr) {
@@ -565,24 +584,6 @@ void AP_CompanionComputer::send_data()
     _last_sent_ms = now;
 }
 
-// AP_GPS 枚举与 protocol（0=无定位, 1=2D, 2=3D, 3=RTK固定）不同，上报前需映射
-static uint8_t map_gps_status_to_protocol(AP_GPS::GPS_Status status)
-{
-    switch (status) {
-    case AP_GPS::GPS_OK_FIX_2D:
-        return 1;
-    case AP_GPS::GPS_OK_FIX_3D:
-    case AP_GPS::GPS_OK_FIX_3D_DGPS:
-    case AP_GPS::GPS_OK_FIX_3D_RTK_FLOAT:  // 浮点 RTK 仍视为 3D
-        return 2;
-    case AP_GPS::GPS_OK_FIX_3D_RTK_FIXED:
-        return 3;
-    case AP_GPS::NO_GPS:
-    case AP_GPS::NO_FIX:
-    default:
-        return 0;
-    }
-}
 
 AP_CompanionComputer *AP_CompanionComputer::_singleton;
 
