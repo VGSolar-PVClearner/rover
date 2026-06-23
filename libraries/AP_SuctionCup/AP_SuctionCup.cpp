@@ -492,10 +492,10 @@ void AP_SuctionCup::log_status(bool force)
     _last_logged_phase = _phase;
     _last_log_ms = now;
 
-    gcs().send_text(MAV_SEVERITY_INFO,
-                    "VG_SCUP: st=%u ph=%u frz=%u lift=%u valve=%u pump=%u",
-                    unsigned(_state), unsigned(_phase), unsigned(_frozen),
-                    unsigned(_last_lift_pwm), unsigned(_last_valve_pwm), unsigned(_last_pump_pwm));
+    // gcs().send_text(MAV_SEVERITY_INFO,
+    //                 "VG_SCUP: st=%u ph=%u frz=%u lift=%u valve=%u pump=%u",
+    //                 unsigned(_state), unsigned(_phase), unsigned(_frozen),
+    //                 unsigned(_last_lift_pwm), unsigned(_last_valve_pwm), unsigned(_last_pump_pwm));
 }
 
 namespace AP {
