@@ -983,10 +983,8 @@ private:
         STOPPING,
         WAIT_STOPPED,
         LOWER_SUCTION,
-        WAIT_SUCTION_DN,
         TURNING,
         RAISE_SUCTION,
-        WAIT_SUCTION_UP,
     };
 
     VGSubMode _vg_submode;
@@ -1021,6 +1019,7 @@ private:
 
     uint32_t _last_ncu_cmd_ms;
     uint32_t _turn_phase_start_ms;
+    bool _turn_frozen;
 
     AP_Int8  _enabled;
     AP_Float _kp_yaw;
@@ -1039,6 +1038,10 @@ private:
     void start_turn(const TurnData &cmd);
     void cancel_navigation();
     void check_ncu_timeout();
+    void check_tilt_safety();
+    void sync_suction_fault_flags();
+    void abort_turn_suction_fault();
+    void complete_turn();
     void set_brush_control(uint8_t brush_id, bool turn_on);
     void capture_ned_origin();
     bool nav_position_reached() const;

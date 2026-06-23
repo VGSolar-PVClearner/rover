@@ -54,6 +54,9 @@ public:
     // 清除 FAULT，回到 RAISED（需人工确认安全后调用）
     void clear_fault();
 
+    // 解除 freeze()（新转弯指令等场景）
+    void unfreeze();
+
     bool is_active() const { return _active; }
     bool is_busy() const;
     bool is_lowered() const;
