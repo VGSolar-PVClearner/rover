@@ -10,7 +10,8 @@
   帧格式与指令定义见 AP_CompanionComputer_config.h。
   Rover 通过 receive_companion_computer() / send2_companion_computer() 调度 update() / send_data()。
  */
-class AP_CompanionComputer {
+class AP_CompanionComputer
+{
 public:
     AP_CompanionComputer();
 
@@ -18,7 +19,10 @@ public:
     AP_CompanionComputer(const AP_CompanionComputer &other) = delete;
     AP_CompanionComputer &operator=(const AP_CompanionComputer&) = delete;
 
-    static AP_CompanionComputer *get_singleton() { return _singleton; }
+    static AP_CompanionComputer *get_singleton()
+    {
+        return _singleton;
+    }
 
     void init();
     void update();
@@ -36,22 +40,61 @@ public:
     void reset_mode_status();
 
     // NCU 指令缓存（供 ModeVGSolar 读取）
-    const SpeedCtrlData& get_latest_speed_ctrl() const { return _latest_speed_ctrl; }
-    const TurnData& get_latest_turn() const { return _latest_turn; }
-    const PositionData& get_latest_position() const { return _latest_position; }
-    const SystemCtrlData& get_latest_system_ctrl() const { return _latest_system_ctrl; }
+    const SpeedCtrlData& get_latest_speed_ctrl() const
+    {
+        return _latest_speed_ctrl;
+    }
+    const TurnData& get_latest_turn() const
+    {
+        return _latest_turn;
+    }
+    const PositionData& get_latest_position() const
+    {
+        return _latest_position;
+    }
+    const SystemCtrlData& get_latest_system_ctrl() const
+    {
+        return _latest_system_ctrl;
+    }
 
-    bool is_new_speed_ctrl() const { return _new_cmd_flags & (1<<0); }
-    bool is_new_turn() const { return _new_cmd_flags & (1<<1); }
-    bool is_new_position() const { return _new_cmd_flags & (1<<2); }
-    bool is_new_system_ctrl() const { return _new_cmd_flags & (1<<3); }
+    bool is_new_speed_ctrl() const
+    {
+        return _new_cmd_flags & (1<<0);
+    }
+    bool is_new_turn() const
+    {
+        return _new_cmd_flags & (1<<1);
+    }
+    bool is_new_position() const
+    {
+        return _new_cmd_flags & (1<<2);
+    }
+    bool is_new_system_ctrl() const
+    {
+        return _new_cmd_flags & (1<<3);
+    }
 
-    void clear_new_speed_flag() { _new_cmd_flags &= ~(1<<0); }
-    void clear_new_turn_flag() { _new_cmd_flags &= ~(1<<1); }
-    void clear_new_position_flag() { _new_cmd_flags &= ~(1<<2); }
-    void clear_new_system_flag() { _new_cmd_flags &= ~(1<<3); }
+    void clear_new_speed_flag()
+    {
+        _new_cmd_flags &= ~(1<<0);
+    }
+    void clear_new_turn_flag()
+    {
+        _new_cmd_flags &= ~(1<<1);
+    }
+    void clear_new_position_flag()
+    {
+        _new_cmd_flags &= ~(1<<2);
+    }
+    void clear_new_system_flag()
+    {
+        _new_cmd_flags &= ~(1<<3);
+    }
 
-    bool is_estop_active() const { return _estop_active; }
+    bool is_estop_active() const
+    {
+        return _estop_active;
+    }
 
     // 滚刷运行参数停止：PWM 回中位并清零内存状态
     void stop_brushes();
@@ -130,6 +173,7 @@ private:
     static uint8_t compute_motion_state(int16_t velocity_cms, bool estop, bool turning, uint16_t fault_code);
 };
 
-namespace AP {
-    AP_CompanionComputer &companioncomputer();
+namespace AP
+{
+AP_CompanionComputer &companioncomputer();
 };

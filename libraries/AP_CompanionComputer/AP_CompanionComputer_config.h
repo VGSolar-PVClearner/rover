@@ -97,88 +97,88 @@
  * byte 21              end sign            0xFF
  *
  * *********************************************/
- /*
- * =============================================================================
- * ************ 发送通信协议 (FCU → NCU) *********************************
- * =============================================================================
- *
- * --- 公共帧头 (byte 0~4) ---
- * byte 0               FRAME_HEADER1       0xA5
- * byte 1               FRAME_HEADER2       0x5A
- * byte 2               command source      0xBB
- * byte 3               command content     见下表
- * byte 4               DATA_LENGTH         见下表
- *
- * --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x1A) ---
- * byte 5               battery_percent     电池电量 0~100 %
- * byte 6               longitude8          经度 int32 低 8 位 (×1e7)
- * byte 7               longitude16         经度 int32 8~15 位
- * byte 8               longitude24         经度 int32 16~23 位
- * byte 9               longitude32         经度 int32 高 8 位
- * byte 10              latitude8           纬度 int32 低 8 位 (×1e7)
- * byte 11              latitude16          纬度 int32 8~15 位
- * byte 12              latitude24          纬度 int32 16~23 位
- * byte 13              latitude32          纬度 int32 高 8 位
- * byte 14              heading_L           航向角 uint16 低 8 位, 0.01° (0~36000)
- * byte 15              heading_H           航向角 uint16 高 8 位
- * byte 16              velocity_L          地速 int16 低 8 位, cm/s
- * byte 17              velocity_H          地速 int16 高 8 位
- * byte 18              left_track_vel_L    左履带速度 int16 低 8 位, cm/s (WENC)
- * byte 19              left_track_vel_H    左履带速度 int16 高 8 位
- * byte 20              right_track_vel_L   右履带速度 int16 低 8 位, cm/s (WENC2)
- * byte 21              right_track_vel_H   右履带速度 int16 高 8 位
- * byte 22              roll_L              横滚 int16 低 8 位, 0.01°
- * byte 23              roll_H              横滚 int16 高 8 位
- * byte 24              pitch_L             俯仰 int16 低 8 位, 0.01°
- * byte 25              pitch_H             俯仰 int16 高 8 位
- * byte 26              control_mode        控制模式 (ControlMode 枚举)
- * byte 27              motion_state        运动状态 (MotionState 枚举)
- * byte 28              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
- * byte 29              fault_code_H        故障码 uint16 高 8 位
- * byte 30              gps_status          GPS 定位状态
- * byte 31              Checksum
- * byte 32              end sign            0xFF
- *
- * --- 0x02 指令应答 (FCU_FB_CMD_ACK, DATA_LENGTH = 0x02, 整帧 0x09 字节) ---
- * byte 5               cmd_type            对应的 NCU 指令类型
- * byte 6               status              0x01:成功  0x02:失败
- * byte 7               Checksum
- * byte 8               end sign            0xFF
- *
- * --- 0x03 参数反馈 (FCU_FB_PARAM, DATA_LENGTH = 0x07) ---
- * byte 5               param_index_L       参数索引 uint16 低 8 位
- * byte 6               param_index_H       参数索引 uint16 高 8 位
- * byte 7               param_type          参数类型
- * byte 8               param_value8        参数值 uint32 低 8 位
- * byte 9               param_value16       参数值 uint32 8~15 位
- * byte 10              param_value24       参数值 uint32 16~23 位
- * byte 11              param_value32       参数值 uint32 高 8 位
- * byte 12              Checksum
- * byte 13              end sign            0xFF
- *
- * --- 0x04 导航状态 (FCU_FB_NAV_STATUS, DATA_LENGTH = 0x08) ---
- * byte 5               nav_state           0x00:空闲  0x01:导航中  0x02:已到达  0x03:失败  0x04:已取消
- * byte 6               coord_mode          坐标模式 (同 NCU 导航模式)
- * byte 7               distance_to_target8 距目标 uint32 低 8 位, cm
- * byte 8               distance_to_target16
- * byte 9               distance_to_target24
- * byte 10              distance_to_target32
- * byte 11              heading_error_L     航向误差 int16 低 8 位, 0.01°
- * byte 12              heading_error_H     航向误差 int16 高 8 位
- * byte 13              Checksum
- * byte 14              end sign            0xFF
- *
- * 控制模式 control_mode (ControlMode):
- *   0x00 STANDBY  0x01 YAW  0x02 YAWRATE  0x03 TURN  0x04 NAV_GPS  0x05 NAV_BODY
- *
- * 运动状态 motion_state (MotionState):
- *   0x00 STOPPED  0x01 FORWARD  0x02 BACKWARD  0x03 TURNING  0x04 ESTOP  0x05 FAULT
- *
- *
- * *********************************************
- *
- * =============================================================================
- */
+/*
+* =============================================================================
+* ************ 发送通信协议 (FCU → NCU) *********************************
+* =============================================================================
+*
+* --- 公共帧头 (byte 0~4) ---
+* byte 0               FRAME_HEADER1       0xA5
+* byte 1               FRAME_HEADER2       0x5A
+* byte 2               command source      0xBB
+* byte 3               command content     见下表
+* byte 4               DATA_LENGTH         见下表
+*
+* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x1A) ---
+* byte 5               battery_percent     电池电量 0~100 %
+* byte 6               longitude8          经度 int32 低 8 位 (×1e7)
+* byte 7               longitude16         经度 int32 8~15 位
+* byte 8               longitude24         经度 int32 16~23 位
+* byte 9               longitude32         经度 int32 高 8 位
+* byte 10              latitude8           纬度 int32 低 8 位 (×1e7)
+* byte 11              latitude16          纬度 int32 8~15 位
+* byte 12              latitude24          纬度 int32 16~23 位
+* byte 13              latitude32          纬度 int32 高 8 位
+* byte 14              heading_L           航向角 uint16 低 8 位, 0.01° (0~36000)
+* byte 15              heading_H           航向角 uint16 高 8 位
+* byte 16              velocity_L          地速 int16 低 8 位, cm/s
+* byte 17              velocity_H          地速 int16 高 8 位
+* byte 18              left_track_vel_L    左履带速度 int16 低 8 位, cm/s (WENC)
+* byte 19              left_track_vel_H    左履带速度 int16 高 8 位
+* byte 20              right_track_vel_L   右履带速度 int16 低 8 位, cm/s (WENC2)
+* byte 21              right_track_vel_H   右履带速度 int16 高 8 位
+* byte 22              roll_L              横滚 int16 低 8 位, 0.01°
+* byte 23              roll_H              横滚 int16 高 8 位
+* byte 24              pitch_L             俯仰 int16 低 8 位, 0.01°
+* byte 25              pitch_H             俯仰 int16 高 8 位
+* byte 26              control_mode        控制模式 (ControlMode 枚举)
+* byte 27              motion_state        运动状态 (MotionState 枚举)
+* byte 28              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
+* byte 29              fault_code_H        故障码 uint16 高 8 位
+* byte 30              gps_status          GPS 定位状态
+* byte 31              Checksum
+* byte 32              end sign            0xFF
+*
+* --- 0x02 指令应答 (FCU_FB_CMD_ACK, DATA_LENGTH = 0x02, 整帧 0x09 字节) ---
+* byte 5               cmd_type            对应的 NCU 指令类型
+* byte 6               status              0x01:成功  0x02:失败
+* byte 7               Checksum
+* byte 8               end sign            0xFF
+*
+* --- 0x03 参数反馈 (FCU_FB_PARAM, DATA_LENGTH = 0x07) ---
+* byte 5               param_index_L       参数索引 uint16 低 8 位
+* byte 6               param_index_H       参数索引 uint16 高 8 位
+* byte 7               param_type          参数类型
+* byte 8               param_value8        参数值 uint32 低 8 位
+* byte 9               param_value16       参数值 uint32 8~15 位
+* byte 10              param_value24       参数值 uint32 16~23 位
+* byte 11              param_value32       参数值 uint32 高 8 位
+* byte 12              Checksum
+* byte 13              end sign            0xFF
+*
+* --- 0x04 导航状态 (FCU_FB_NAV_STATUS, DATA_LENGTH = 0x08) ---
+* byte 5               nav_state           0x00:空闲  0x01:导航中  0x02:已到达  0x03:失败  0x04:已取消
+* byte 6               coord_mode          坐标模式 (同 NCU 导航模式)
+* byte 7               distance_to_target8 距目标 uint32 低 8 位, cm
+* byte 8               distance_to_target16
+* byte 9               distance_to_target24
+* byte 10              distance_to_target32
+* byte 11              heading_error_L     航向误差 int16 低 8 位, 0.01°
+* byte 12              heading_error_H     航向误差 int16 高 8 位
+* byte 13              Checksum
+* byte 14              end sign            0xFF
+*
+* 控制模式 control_mode (ControlMode):
+*   0x00 STANDBY  0x01 YAW  0x02 YAWRATE  0x03 TURN  0x04 NAV_GPS  0x05 NAV_BODY
+*
+* 运动状态 motion_state (MotionState):
+*   0x00 STOPPED  0x01 FORWARD  0x02 BACKWARD  0x03 TURNING  0x04 ESTOP  0x05 FAULT
+*
+*
+* *********************************************
+*
+* =============================================================================
+*/
 
 // 协议常量
 constexpr uint8_t COMPANION_FRAME_HEADER1     = 0xA5;
@@ -443,17 +443,20 @@ struct ParsedPosition {
 };
 
 // 数据包构建器
-class PacketBuilder {
+class PacketBuilder
+{
 public:
     template <typename T>
-    static std::array<uint8_t, sizeof(T)> serialize(const T& packet) {
+    static std::array<uint8_t, sizeof(T)> serialize(const T& packet)
+    {
         std::array<uint8_t, sizeof(T)> buffer;
         memcpy(buffer.data(), &packet, sizeof(T));
         return buffer;
     }
 
     template <typename T>
-    static T deserialize(const uint8_t* data) {
+    static T deserialize(const uint8_t* data)
+    {
         T packet;
         memcpy(&packet, data, sizeof(T));
         return packet;

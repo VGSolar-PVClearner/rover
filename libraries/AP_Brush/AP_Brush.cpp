@@ -109,7 +109,8 @@ void AP_Brush::log_brush_status(bool front_on, bool rear_on, uint8_t power_pct,
                     unsigned(front_pwm), unsigned(rear_pwm));
 }
 
-namespace AP {
+namespace AP
+{
 
 AP_Brush &brush()
 {
