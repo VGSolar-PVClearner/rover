@@ -9,7 +9,8 @@
   PWM is only driven while VGSL mode is active.
   Brush ESC: 1000us = stop, 2000us = max speed; power 1~100% linearly maps between them.
  */
-class AP_Brush {
+class AP_Brush
+{
 public:
     AP_Brush();
 
@@ -17,7 +18,10 @@ public:
     AP_Brush(const AP_Brush &other) = delete;
     AP_Brush &operator=(const AP_Brush&) = delete;
 
-    static AP_Brush *get_singleton() { return _singleton; }
+    static AP_Brush *get_singleton()
+    {
+        return _singleton;
+    }
 
     // VGSL mode enter/leave
     void set_active(bool active);
@@ -52,6 +56,7 @@ private:
     void log_brush_status(bool front_on, bool rear_on, uint8_t power_pct, uint16_t front_pwm, uint16_t rear_pwm);
 };
 
-namespace AP {
-    AP_Brush &brush();
+namespace AP
+{
+AP_Brush &brush();
 }
