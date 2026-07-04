@@ -30,6 +30,8 @@ AP_CompanionComputer::AP_CompanionComputer() :
     _rx_count(0),
     _uart(nullptr),
     _last_sent_ms(0),
+    _tx_drop_event(0),
+    _tx_drop_periodic(0),
     _new_cmd_flags(0),
     _estop_active(false),
     _fb_control_mode(0),
@@ -248,26 +250,62 @@ void AP_CompanionComputer::set_nav_status(const NavStatusData &data, bool send_n
     _nav_status_send = send_nav;
 }
 
+size_t AP_CompanionComputer::build_frame(uint8_t cmd_content, const uint8_t *body, uint8_t body_len,
+        uint8_t *out, size_t out_size) const
+{
+    const size_t frame_len = size_t(body_len) + FRAME_OVERHEAD;
+    if (out_size < frame_len || body_len > FCU_TX_MAX_DATA_LEN) {
+        return 0;
+    }
+
+    out[0] = COMPANION_FRAME_HEADER1;
+    out[1] = COMPANION_FRAME_HEADER2;
+    out[2] = COMPANION_CMD_SOURCE_FC;
+    out[3] = cmd_content;
+    out[4] = body_len;
+    if (body_len > 0 && body != nullptr) {
+        memcpy(out + 5, body, body_len);
+    }
+    out[frame_len - 2] = calculate_checksum(out, frame_len - 2);
+    out[frame_len - 1] = COMPANION_END_SIGN;
+    return frame_len;
+}
+
+bool AP_CompanionComputer::send_frame(const uint8_t *data, size_t len, TxPriority pri)
+{
+    if (!_enable || _uart == nullptr || data == nullptr || len == 0) {
+        return false;
+    }
+
+    if (_uart->txspace() < len) {
+        if (pri == TxPriority::PERIODIC) {
+            _tx_drop_periodic++;
+            return false;
+        }
+        _tx_drop_event++;
+    }
+
+    return _uart->write(data, len) == len;
+}
+
 void AP_CompanionComputer::send_nav_data()
 {
-    if (!_enable || _uart == nullptr || !_nav_status_send) {
+    if (!_nav_status_send) {
         return;
     }
 
-    NavStatusFeedbackFrame pkt {};
-    pkt.header1 = COMPANION_FRAME_HEADER1;
-    pkt.header2 = COMPANION_FRAME_HEADER2;
-    pkt.cmd_source = COMPANION_CMD_SOURCE_FC;
-    pkt.cmd_content = FCU_FB_NAV_STATUS;
-    pkt.data_length = sizeof(NavStatusData);
-    pkt.data = _nav_status;
+    uint8_t packet[COMPANION_SEND_NAV_LENGTH];
+    const size_t frame_len = build_frame(FCU_FB_NAV_STATUS,
+                                         reinterpret_cast<const uint8_t *>(&_nav_status),
+                                         sizeof(NavStatusData),
+                                         packet, sizeof(packet));
+    if (frame_len == 0) {
+        return;
+    }
 
-    auto packet = PacketBuilder::serialize(pkt);
-    packet[packet.size()-2] = calculate_checksum(packet.data(), packet.size()-2);
-    packet[packet.size()-1] = COMPANION_END_SIGN;
-
-    _uart->write(packet.data(), packet.size());
-    _nav_status_send = false;
+    if (send_frame(packet, frame_len, TxPriority::PERIODIC)) {
+        _nav_status_send = false;
+    }
 }
 
 bool AP_CompanionComputer::write_runtime_param(uint16_t param_index, uint8_t param_type, uint32_t param_value,
@@ -346,43 +384,29 @@ void AP_CompanionComputer::stop_brushes()
 
 void AP_CompanionComputer::send_response(uint8_t cmd_type, uint8_t status)
 {
-    if (!_enable || _uart == nullptr) {
+    const CmdAckData ack { cmd_type, status };
+    uint8_t packet[COMPANION_SEND_RESP_LENGTH];
+    const size_t frame_len = build_frame(FCU_FB_CMD_ACK,
+                                         reinterpret_cast<const uint8_t *>(&ack),
+                                         sizeof(CmdAckData),
+                                         packet, sizeof(packet));
+    if (frame_len == 0) {
         return;
     }
-
-    std::array<uint8_t, COMPANION_SEND_RESP_LENGTH> response_buffer {};
-    response_buffer[0] = COMPANION_FRAME_HEADER1;
-    response_buffer[1] = COMPANION_FRAME_HEADER2;
-    response_buffer[2] = COMPANION_CMD_SOURCE_FC;
-    response_buffer[3] = FCU_FB_CMD_ACK;
-    response_buffer[4] = FCU_DATA_LEN_CMD_ACK;
-    response_buffer[5] = cmd_type;
-    response_buffer[6] = status;
-    response_buffer[7] = calculate_checksum(response_buffer.data(), response_buffer.size()-2);
-    response_buffer[8] = COMPANION_END_SIGN;
-
-    _uart->write(response_buffer.data(), response_buffer.size());
+    send_frame(packet, frame_len, TxPriority::EVENT);
 }
 
 void AP_CompanionComputer::send_param_feedback(const ParamFeedbackData &data)
 {
-    if (!_enable || _uart == nullptr) {
+    uint8_t packet[COMPANION_SEND_PARAM_LENGTH];
+    const size_t frame_len = build_frame(FCU_FB_PARAM,
+                                         reinterpret_cast<const uint8_t *>(&data),
+                                         sizeof(ParamFeedbackData),
+                                         packet, sizeof(packet));
+    if (frame_len == 0) {
         return;
     }
-
-    ParamFeedbackFrame pkt {};
-    pkt.header1 = COMPANION_FRAME_HEADER1;
-    pkt.header2 = COMPANION_FRAME_HEADER2;
-    pkt.cmd_source = COMPANION_CMD_SOURCE_FC;
-    pkt.cmd_content = FCU_FB_PARAM;
-    pkt.data_length = sizeof(ParamFeedbackData);
-    pkt.data = data;
-
-    auto packet = PacketBuilder::serialize(pkt);
-    packet[packet.size()-2] = calculate_checksum(packet.data(), packet.size()-2);
-    packet[packet.size()-1] = COMPANION_END_SIGN;
-
-    _uart->write(packet.data(), packet.size());
+    send_frame(packet, frame_len, TxPriority::EVENT);
 }
 
 bool AP_CompanionComputer::validate_packet() const
@@ -510,37 +534,31 @@ void AP_CompanionComputer::send_data()
     }
 
     // FCU → NCU 状态反馈帧 0xBB 0x01
-    StatusFeedbackFrame pkt {};
-    pkt.header1 = COMPANION_FRAME_HEADER1;
-    pkt.header2 = COMPANION_FRAME_HEADER2;
-    pkt.cmd_source = COMPANION_CMD_SOURCE_FC;
-    pkt.cmd_content = FCU_FB_STATUS;
-    pkt.data_length = sizeof(StatusFeedbackData);
-
+    StatusFeedbackData status_data {};
     const AP_AHRS &ahrs = AP::ahrs();
     // const AP_BattMonitor &battery = AP::battery();
 
     // // 电池电量 (%)
     // uint8_t percentage = 0;
     // if (battery.capacity_remaining_pct(percentage, 1)) {
-    //     pkt.data.battery_percent = percentage;
+    //     status_data.battery_percent = percentage;
     // }
 
-    pkt.data.battery_percent = 100;
+    status_data.battery_percent = 100;
 
     // 经纬度 (度 × 1e7)
     Location loc;
     if (ahrs.get_location(loc)) {
-        pkt.data.longitude = loc.lng;
-        pkt.data.latitude = loc.lat;
+        status_data.longitude = loc.lng;
+        status_data.latitude = loc.lat;
     }
 
     // 航向 (0.01°, 0~36000)；yaw_sensor 已为同单位厘度 [0, 36000)
-    pkt.data.heading = (uint16_t)ahrs.yaw_sensor;
+    status_data.heading = (uint16_t)ahrs.yaw_sensor;
 
     // 线速度 (cm/s)
     const int16_t velocity_cms = constrain_int16(int16_t(lroundf(ahrs.groundspeed() * 100.0f)), -32767, 32767);
-    pkt.data.velocity = velocity_cms;
+    status_data.velocity = velocity_cms;
 
     // 左右履带速度 (cm/s)
     AP_WheelEncoder *wenc = AP::wheelencoder();
@@ -552,16 +570,16 @@ void AP_CompanionComputer::send_data()
             const float rate_mps = wenc->get_rate(i) * wenc->get_wheel_radius(i);
             const int16_t vel_cms = constrain_int16(int16_t(lroundf(rate_mps * 100.0f)), -32767, 32767);
             if (i == 0) {
-                pkt.data.left_track_vel = vel_cms;
+                status_data.left_track_vel = vel_cms;
             } else {
-                pkt.data.right_track_vel = vel_cms;
+                status_data.right_track_vel = vel_cms;
             }
         }
     }
 
     // 横滚 / 俯仰 (0.01°)
-    pkt.data.roll = constrain_int16(int16_t(lroundf(degrees(ahrs.get_roll()) * 100.0f)), -32767, 32767);
-    pkt.data.pitch = constrain_int16(int16_t(lroundf(degrees(ahrs.get_pitch()) * 100.0f)), -32767, 32767);
+    status_data.roll = constrain_int16(int16_t(lroundf(degrees(ahrs.get_roll()) * 100.0f)), -32767, 32767);
+    status_data.pitch = constrain_int16(int16_t(lroundf(degrees(ahrs.get_pitch()) * 100.0f)), -32767, 32767);
 
     // 控制模式 / 运动状态 / 故障码
     const uint8_t control_mode = _fb_mode_status_valid ? _fb_control_mode : uint8_t(ControlMode::STANDBY);
@@ -569,21 +587,27 @@ void AP_CompanionComputer::send_data()
     const bool turning = _fb_turning;
     const uint16_t fault_code = _fb_fault_bits | collect_sensor_faults();
 
-    pkt.data.control_mode = control_mode;
-    pkt.data.motion_state = compute_motion_state(velocity_cms, estop, turning, fault_code);
-    pkt.data.fault_code = fault_code;
+    status_data.control_mode = control_mode;
+    status_data.motion_state = compute_motion_state(velocity_cms, estop, turning, fault_code);
+    status_data.fault_code = fault_code;
 
 #if AP_GPS_ENABLED
     // 映射到 protocol 0~3，不可直接传 AP_GPS::status() 枚举
-    pkt.data.gps_status = map_gps_status_to_protocol(AP::gps().status());
+    status_data.gps_status = map_gps_status_to_protocol(AP::gps().status());
 #endif
 
-    auto packet = PacketBuilder::serialize(pkt);
-    packet[packet.size()-2] = calculate_checksum(packet.data(), packet.size()-2);
-    packet[packet.size()-1] = COMPANION_END_SIGN;
+    uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];
+    const size_t frame_len = build_frame(FCU_FB_STATUS,
+                                         reinterpret_cast<const uint8_t *>(&status_data),
+                                         sizeof(StatusFeedbackData),
+                                         packet, sizeof(packet));
+    if (frame_len == 0) {
+        return;
+    }
 
-    _uart->write(packet.data(), packet.size());
-    _last_sent_ms = now;
+    if (send_frame(packet, frame_len, TxPriority::PERIODIC)) {
+        _last_sent_ms = now;
+    }
 }
 
 

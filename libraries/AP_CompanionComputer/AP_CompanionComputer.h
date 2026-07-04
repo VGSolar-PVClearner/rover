@@ -8,7 +8,9 @@
 /*
   NCU (上位机) ↔ FCU (飞控) 串口通信。
   帧格式与指令定义见 AP_CompanionComputer_config.h。
-  Rover 通过 receive_companion_computer() / send2_companion_computer() 调度 update() / send_data()。
+  Rover 通过 receive_companion_computer() / send2_companion_computer() 调度 update() /
+  send_data() / send_nav_data()。事件帧 (0x02/0x03) 在 parse/mode 内即时发送；周期帧
+  (0x01/0x04) 在 10Hz 任务内发送；底层均经 send_frame() 写串口。
  */
 class AP_CompanionComputer
 {
@@ -104,6 +106,11 @@ public:
 private:
     static AP_CompanionComputer *_singleton;
 
+    enum class TxPriority : uint8_t {
+        EVENT,    // 0x02 / 0x03：按需即时
+        PERIODIC, // 0x01 / 0x04：10Hz 任务
+    };
+
     // Parameters
     AP_Int8 _enable;
     AP_Int8 _port_index;
@@ -124,6 +131,8 @@ private:
     uint8_t _rx_count;
     uint32_t _rx_start_time;
     uint32_t _last_sent_ms;  // send_data 10Hz 限速
+    uint16_t _tx_drop_event;
+    uint16_t _tx_drop_periodic;
 
     uint8_t _cmd_type;
     uint8_t _data_len;
@@ -157,6 +166,12 @@ private:
     // 校验和: byte2..byte(n-2) 累加和低 8 位（帧头不参与）
     uint8_t calculate_checksum(const uint8_t *data, uint8_t len) const;
     bool validate_packet() const;
+
+    // 组 FCU→NCU 帧到 out；成功返回整帧长度，失败返回 0
+    size_t build_frame(uint8_t cmd_content, const uint8_t *body, uint8_t body_len,
+                       uint8_t *out, size_t out_size) const;
+    bool send_frame(const uint8_t *data, size_t len, TxPriority pri);
+
     void send_response(uint8_t cmd_type, uint8_t status);
     void send_param_feedback(const ParamFeedbackData &data);
 
