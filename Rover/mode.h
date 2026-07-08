@@ -1298,7 +1298,16 @@ private:
 
     uint32_t _last_ncu_cmd_ms;
     uint32_t _turn_phase_start_ms;
-    bool _turn_frozen;
+    bool _turn_frozen;  // 安全事件后暂停转弯阶段推进
+
+    // 倾角/NCU 超时触发的吸盘保持（可叠加）；try_recover_safety_hold() 统一恢复
+    static constexpr uint8_t SAFETY_HOLD_TILT     = 1 << 0;
+    static constexpr uint8_t SAFETY_HOLD_NCU_COMM = 1 << 1;
+    uint8_t _safety_hold_mask;
+
+    static constexpr uint32_t TURN_PWM_GCS_INTERVAL_MS = 1000;  // 转弯调试 PWM 上报间隔
+    uint32_t _last_turn_pwm_gcs_ms;
+    TurnPhase _last_turn_gcs_phase;
 
     AP_Int8  _enabled;
     AP_Float _kp_yaw;
@@ -1318,9 +1327,16 @@ private:
     void cancel_navigation();
     void check_ncu_timeout();
     void check_tilt_safety();
+    void try_recover_safety_hold();
+    bool tilt_within_limit() const;
+    void enter_safety_hold(uint8_t reason_bit);
+    void clear_safety_hold_mask();
+    void abort_motion_for_safety_recovery();
+    void release_safety_hold_suction();
     void sync_suction_fault_flags();
     void abort_turn_suction_fault();
     void complete_turn();
+    void send_turn_pwm_gcs(bool force = false);
     void set_brush_control(uint8_t brush_id, bool turn_on);
     void capture_ned_origin();
     bool nav_position_reached() const;

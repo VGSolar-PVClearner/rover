@@ -76,7 +76,10 @@ ModeVGSolar::ModeVGSolar(void) :
     _arrival_yaw_target_cd(0.0f),
     _last_ncu_cmd_ms(0),
     _turn_phase_start_ms(0),
-    _turn_frozen(false)
+    _turn_frozen(false),
+    _safety_hold_mask(0),
+    _last_turn_pwm_gcs_ms(0),
+    _last_turn_gcs_phase(TurnPhase::IDLE)
 {
     AP_Param::setup_object_defaults(this, var_info);
 }
@@ -97,12 +100,14 @@ bool ModeVGSolar::_enter()
     _target_speed_ms = 0.0f;
     _last_ncu_cmd_ms = 0;
     _fault_flags = 0;
+    clear_safety_hold_mask();
     _nav_phase = NavPhase::CRUISE;
     // 记录 NED 全局原点，供后续 NED 导航换算经纬度
     capture_ned_origin();
 
     rover.companion_computer.stop_brushes();
     AP::brush().set_active(true);
+    AP::suction_cup().clear_fault();
     AP::suction_cup().set_active(true);
 
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: entered");
@@ -144,9 +149,21 @@ void ModeVGSolar::update()
     read_companion_commands();
     // 先消费本周期 NCU 指令，再判超时，避免「先超时停车、后收到新帧」的竞态
     check_ncu_timeout();
+    try_recover_safety_hold();  // 倾角/NCU 条件满足后自动抬吸盘
 
     if (_vg_submode == VGSubMode::ESTOP) {
         update_estop();
+        return;
+    }
+
+    // 安全保持期间禁止 NAV/YAW/YAWRATE 继续运动；TURN 仅 _turn_frozen 路径
+    if (_safety_hold_mask != 0) {
+        stop_vehicle();
+        if (_vg_submode == VGSubMode::TURN) {
+            update_turn();
+        } else {
+            update_standby();
+        }
         return;
     }
 
@@ -200,8 +217,10 @@ void ModeVGSolar::publish_status_feedback()
     const bool estop = (_vg_submode == VGSubMode::ESTOP);
     // protocol：motion_state=0x03 仅吸盘已吸附且尚未抬起期间
     const bool turning = (_vg_submode == VGSubMode::TURN)
-        && AP::suction_cup().is_lowered()
-        && !AP::suction_cup().is_raised();
+                         && AP::suction_cup().is_lowered()
+                         && !AP::suction_cup().is_raised()
+                         && !_turn_frozen
+                         && !AP::suction_cup().is_frozen();
 
     sync_suction_fault_flags();
     rover.companion_computer.update_mode_status(control_mode, estop, turning, _fault_flags);
@@ -275,6 +294,7 @@ void ModeVGSolar::read_companion_commands()
             _vg_submode = VGSubMode::ESTOP;
             _turn_phase = TurnPhase::IDLE;
             _turn_frozen = false;
+            clear_safety_hold_mask();
             cc.stop_brushes();
             AP::suction_cup().emergency_release();
             gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: ESTOP");
@@ -284,6 +304,7 @@ void ModeVGSolar::read_companion_commands()
                 _vg_submode = VGSubMode::STANDBY;
                 gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: ESTOP cleared");
             }
+            try_recover_safety_hold();
             break;
         case SYS_CMD_REBOOT:
             hal.scheduler->reboot(false);
@@ -425,14 +446,20 @@ void ModeVGSolar::read_companion_commands()
             return;
         }
 
-        // 转弯进行中忽略速度帧；超时/倾角冻结后允许用 YAW/YAWRATE 恢复
-        if (_vg_submode == VGSubMode::TURN) {
-            if (!_turn_frozen) {
-                return;
-            }
-            _turn_phase = TurnPhase::IDLE;
-            _turn_frozen = false;
-            gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: frozen turn cleared by speed ctrl");
+        // 吸盘 lower/raise 序列进行中不接受速度，避免带吸盘移动
+        if (AP::suction_cup().is_busy()) {
+            return;
+        }
+
+        // 转弯冻结：NCU 恢复通信后走统一安全恢复（倾角仍超限则继续等待）
+        if (_vg_submode == VGSubMode::TURN && _turn_frozen) {
+            try_recover_safety_hold();
+            return;
+        }
+
+        // 其它安全保持期间只刷新通信心跳，不切换控制子模式
+        if (_safety_hold_mask != 0) {
+            return;
         }
 
         _target_speed_ms = cmd.velocity * 0.01f;
@@ -461,7 +488,7 @@ void ModeVGSolar::update_yaw()
     // // 复用 ModeGuided 的 HeadingAndSpeed 能力：
     // set_desired_heading_and_speed(_target_yaw_cd, _target_speed_ms);
     // ModeGuided::update();
-    
+
     // 台架/无轮速计：闭环速度 PID 无反馈，油门恒为 0，仅转向差速有输出。
     // 开环：线速度指令 → 油门百分比，航向仍用 calc_steering_to_heading。
     calc_steering_to_heading(_target_yaw_cd);
@@ -568,7 +595,6 @@ void ModeVGSolar::update_estop()
 {
     stop_vehicle();
     rover.companion_computer.stop_brushes();
-    AP::suction_cup().emergency_release();
 }
 
 void ModeVGSolar::sync_suction_fault_flags()
@@ -591,6 +617,7 @@ void ModeVGSolar::abort_turn_suction_fault()
     _vg_submode = VGSubMode::STANDBY;
     _turn_phase = TurnPhase::IDLE;
     _turn_frozen = false;
+    clear_safety_hold_mask();
     AP::suction_cup().emergency_release();
     gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: suction fault, turn aborted");
 }
@@ -605,31 +632,146 @@ void ModeVGSolar::complete_turn()
 
 void ModeVGSolar::check_tilt_safety()
 {
-    // 仅吸附后检查倾角；台架倾斜或未吸附时不应阻断 YAW/YAWRATE
+    // |roll|/|pitch|>30° 且已吸附：freeze 吸盘；bit9 由 collect_sensor_faults 上报
     if (!AP::suction_cup().is_lowered()) {
         return;
     }
 
-    const int16_t roll_cd = constrain_int16(int16_t(lroundf(degrees(ahrs.get_roll()) * 100.0f)), -32767, 32767);
-    const int16_t pitch_cd = constrain_int16(int16_t(lroundf(degrees(ahrs.get_pitch()) * 100.0f)), -32767, 32767);
-    if (abs(roll_cd) <= 3000 && abs(pitch_cd) <= 3000) {
+    if (tilt_within_limit()) {
         return;
     }
 
     stop_vehicle();
+    enter_safety_hold(SAFETY_HOLD_TILT);
     AP::suction_cup().freeze();
     if (_vg_submode == VGSubMode::TURN) {
         _turn_frozen = true;
     }
 }
 
+bool ModeVGSolar::tilt_within_limit() const
+{
+    // 30° = 3000 cd，与 FAULT_TILT 阈值一致
+    const int16_t roll_cd = constrain_int16(int16_t(lroundf(degrees(ahrs.get_roll()) * 100.0f)), -32767, 32767);
+    const int16_t pitch_cd = constrain_int16(int16_t(lroundf(degrees(ahrs.get_pitch()) * 100.0f)), -32767, 32767);
+    return abs(roll_cd) <= 3000 && abs(pitch_cd) <= 3000;
+}
+
+void ModeVGSolar::enter_safety_hold(uint8_t reason_bit)
+{
+    if ((_safety_hold_mask & reason_bit) == 0) {
+        if (reason_bit == SAFETY_HOLD_TILT) {
+            gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: tilt hold, suction frozen");
+        } else if (reason_bit == SAFETY_HOLD_NCU_COMM) {
+            gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: NCU hold, suction frozen");
+        }
+    }
+    _safety_hold_mask |= reason_bit;
+}
+
+void ModeVGSolar::clear_safety_hold_mask()
+{
+    _safety_hold_mask = 0;
+}
+
+void ModeVGSolar::abort_motion_for_safety_recovery()
+{
+    // 恢复前中止 NAV/TURN/YAW，避免带吸盘继续运动
+    switch (_vg_submode) {
+    case VGSubMode::NAV:
+        stop_vehicle();
+        g2.wp_nav.set_reversed(false);
+        _nav_phase = NavPhase::CRUISE;
+        _nav_report_state = NavReportState::CANCELLED;
+        _vg_submode = VGSubMode::STANDBY;
+        gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: NAV cancelled by safety recovery");
+        break;
+    case VGSubMode::TURN:
+        _vg_submode = VGSubMode::STANDBY;
+        _turn_phase = TurnPhase::IDLE;
+        break;
+    case VGSubMode::YAW:
+    case VGSubMode::YAWRATE:
+        _vg_submode = VGSubMode::STANDBY;
+        break;
+    default:
+        break;
+    }
+    _turn_frozen = false;
+}
+
+void ModeVGSolar::release_safety_hold_suction()
+{
+    // unfreeze 后异步 raise，抬起完成前 is_busy 阻塞速度指令
+    auto &scup = AP::suction_cup();
+    if (scup.is_frozen() || scup.get_state() == AP_SuctionCup::State::FROZEN) {
+        scup.unfreeze();
+    }
+    if (scup.is_lowered()) {
+        scup.raise();
+    }
+}
+
+void ModeVGSolar::try_recover_safety_hold()
+{
+    // TILT：倾角回限；NCU_COMM：bit7 清除；ESTOP 期间不自动恢复
+    if (_safety_hold_mask == 0) {
+        return;
+    }
+
+    if (_vg_submode == VGSubMode::ESTOP) {
+        return;
+    }
+
+    if (AP::suction_cup().is_busy()) {
+        return;
+    }
+
+    if ((_safety_hold_mask & SAFETY_HOLD_TILT) != 0 && !tilt_within_limit()) {
+        return;
+    }
+
+    if ((_safety_hold_mask & SAFETY_HOLD_NCU_COMM) != 0 &&
+        (_fault_flags & FAULT_COMM_TIMEOUT) != 0) {
+        return;
+    }
+
+    const uint8_t recovered_mask = _safety_hold_mask;
+    abort_motion_for_safety_recovery();
+    release_safety_hold_suction();
+    clear_safety_hold_mask();
+
+    if ((recovered_mask & SAFETY_HOLD_TILT) != 0 &&
+        (recovered_mask & SAFETY_HOLD_NCU_COMM) != 0) {
+        gcs().send_text(MAV_SEVERITY_INFO,
+                        "VG_SOLAR: tilt+NCU hold cleared, releasing suction");
+    } else if ((recovered_mask & SAFETY_HOLD_TILT) != 0) {
+        gcs().send_text(MAV_SEVERITY_INFO,
+                        "VG_SOLAR: tilt hold cleared, releasing suction");
+    } else {
+        gcs().send_text(MAV_SEVERITY_INFO,
+                        "VG_SOLAR: NCU hold cleared, releasing suction");
+    }
+}
+
 void ModeVGSolar::start_turn(const TurnData &cmd)
 {
+    // 安全保持/吸盘 busy/故障时拒绝新转弯
+    if (_safety_hold_mask != 0) {
+        gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: TURN rejected, safety hold active");
+        return;
+    }
+
+    if (AP::suction_cup().is_busy()) {
+        gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: TURN rejected, suction busy");
+        return;
+    }
+
     if (AP::suction_cup().has_fault()) {
-        AP::suction_cup().clear_fault();
+        gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: TURN rejected, suction fault");
+        return;
     }
     AP::suction_cup().unfreeze();
-    _fault_flags &= ~FAULT_SUCTION_CUP;
     _turn_frozen = false;
 
     _submode_before_turn = (_vg_submode == VGSubMode::TURN || _vg_submode == VGSubMode::ESTOP)
@@ -646,12 +788,39 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
     gcs().send_text(MAV_SEVERITY_INFO,
                     "VG_SOLAR: TURN start dir=%d mode=%d angle=%.1f",
                     _turn_direction, _turn_mode_type, _turn_target_angle_deg);
+    send_turn_pwm_gcs(true);
+}
+
+void ModeVGSolar::send_turn_pwm_gcs(bool force)
+{
+    // 阶段切换立即上报，同阶段最多 1Hz
+    const uint32_t now = AP_HAL::millis();
+    const bool phase_changed = _turn_phase != _last_turn_gcs_phase;
+    if (!force && !phase_changed &&
+        (now - _last_turn_pwm_gcs_ms) < TURN_PWM_GCS_INTERVAL_MS) {
+        return;
+    }
+
+    _last_turn_pwm_gcs_ms = now;
+    _last_turn_gcs_phase = _turn_phase;
+
+    const auto &scup = AP::suction_cup();
+    gcs().send_text(MAV_SEVERITY_INFO,
+                    "VG_SOLAR TURN pwm: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u",
+                    unsigned(_turn_phase),
+                    unsigned(scup.get_state_u8()),
+                    unsigned(scup.get_phase_u8()),
+                    unsigned(scup.get_last_lift_pwm_us()),
+                    unsigned(scup.get_last_valve_pwm_us()),
+                    unsigned(scup.get_last_pump_pwm_us()));
 }
 
 void ModeVGSolar::update_turn()
 {
     if (_turn_frozen) {
+        // 倾角/NCU 安全保持：只停车，等 try_recover_safety_hold 恢复
         stop_vehicle();
+        send_turn_pwm_gcs();
         return;
     }
 
@@ -750,6 +919,8 @@ void ModeVGSolar::update_turn()
     default:
         break;
     }
+
+    send_turn_pwm_gcs();
 }
 
 void ModeVGSolar::cancel_navigation()
@@ -768,6 +939,12 @@ void ModeVGSolar::check_ncu_timeout()
         return;
     }
 
+    // 转弯/导航执行期豁免 NCU 心跳（协议为单次长指令）；TURN 仅 _turn_frozen 后再判超时
+    if ((_vg_submode == VGSubMode::TURN && !_turn_frozen) ||
+        _vg_submode == VGSubMode::NAV) {
+        return;
+    }
+
     const bool ncu_timed_out = AP_HAL::millis() - _last_ncu_cmd_ms > NCU_HEARTBEAT_TIMEOUT_MS;
     if (!ncu_timed_out) {
         return;
@@ -779,6 +956,7 @@ void ModeVGSolar::check_ncu_timeout()
     switch (_vg_submode) {
     case VGSubMode::TURN:
         stop_vehicle();
+        enter_safety_hold(SAFETY_HOLD_NCU_COMM);
         AP::suction_cup().freeze();
         _turn_frozen = true;
         return;
@@ -786,11 +964,16 @@ void ModeVGSolar::check_ncu_timeout()
     case VGSubMode::NAV:
     case VGSubMode::ESTOP:
         stop_vehicle();
+        enter_safety_hold(SAFETY_HOLD_NCU_COMM);
         AP::suction_cup().freeze();
         return;
 
     case VGSubMode::STANDBY:
         stop_vehicle();
+        if (AP::suction_cup().is_lowered()) {
+            enter_safety_hold(SAFETY_HOLD_NCU_COMM);
+            AP::suction_cup().freeze();
+        }
         return;
 
     default:
@@ -799,6 +982,10 @@ void ModeVGSolar::check_ncu_timeout()
         _vg_submode = VGSubMode::STANDBY;
         _turn_phase = TurnPhase::IDLE;
         _turn_frozen = false;
+        if (AP::suction_cup().is_lowered()) {
+            enter_safety_hold(SAFETY_HOLD_NCU_COMM);
+            AP::suction_cup().freeze();
+        }
         break;
     }
 }
