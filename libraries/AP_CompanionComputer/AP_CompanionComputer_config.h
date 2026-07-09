@@ -282,6 +282,9 @@ constexpr uint16_t PARAM_IDX_BRUSH_REAR  = 0x0102;
 constexpr uint16_t PARAM_IDX_BRUSH_BOTH  = 0x0103;
 constexpr uint16_t PARAM_IDX_BRUSH_POWER = 0x0104;
 
+// 主电池(instance 0)剩余电量 ≤ 此阈值时置 bit8、关刷并拒绝开刷参数
+constexpr uint8_t LOW_BATT_PCT_THRESHOLD = 20;
+
 // 帧长度
 constexpr uint8_t NCU_DATA_LEN_SPEED_CTRL   = 5;
 constexpr uint8_t NCU_DATA_LEN_TURN         = 6;

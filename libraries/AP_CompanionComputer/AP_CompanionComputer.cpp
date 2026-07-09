@@ -270,6 +270,13 @@ void AP_CompanionComputer::send_nav_data()
     _nav_status_send = false;
 }
 
+bool AP_CompanionComputer::is_low_battery() const
+{
+    uint8_t batt_pct = 0;
+    return AP::battery().capacity_remaining_pct(batt_pct, 0)
+           && batt_pct <= LOW_BATT_PCT_THRESHOLD;
+}
+
 bool AP_CompanionComputer::write_runtime_param(uint16_t param_index, uint8_t param_type, uint32_t param_value,
                                                ParamFeedbackData &feedback_out)
 {
@@ -280,6 +287,18 @@ bool AP_CompanionComputer::write_runtime_param(uint16_t param_index, uint8_t par
 
     feedback_out.param_index = param_index;
     feedback_out.param_type = PARAM_TYPE_UINT32;
+
+    // 低电压：拒绝开启滚刷；关刷与功率档位仍允许
+    if (is_low_battery() && param_value != 0) {
+        switch (param_index) {
+        case PARAM_IDX_BRUSH_FRONT:
+        case PARAM_IDX_BRUSH_REAR:
+        case PARAM_IDX_BRUSH_BOTH:
+            return false;
+        default:
+            break;
+        }
+    }
 
     switch (param_index) {
     case PARAM_IDX_BRUSH_FRONT:
@@ -450,6 +469,10 @@ uint16_t AP_CompanionComputer::collect_sensor_faults() const
         if (wenc->num_sensors() > 1 && wenc->enabled(1) && !wenc->healthy(1)) {
             faults |= FAULT_RIGHT_MOTOR;
         }
+    }
+
+    if (is_low_battery()) {
+        faults |= FAULT_LOW_VOLTAGE;
     }
 
     return faults;
