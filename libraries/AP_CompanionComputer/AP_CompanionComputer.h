@@ -101,6 +101,9 @@ public:
     // 滚刷运行参数停止：PWM 回中位并清零内存状态
     void stop_brushes();
 
+    // 主电池(instance 0)电量有效且 ≤ LOW_BATT_PCT_THRESHOLD；无有效读数时返回 false
+    bool is_low_battery() const;
+
     static const struct AP_Param::GroupInfo var_info[];
 
 private:
