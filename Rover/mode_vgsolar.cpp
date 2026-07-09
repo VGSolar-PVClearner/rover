@@ -485,18 +485,9 @@ void ModeVGSolar::update_standby()
 
 void ModeVGSolar::update_yaw()
 {
-    // // 复用 ModeGuided 的 HeadingAndSpeed 能力：
-    // set_desired_heading_and_speed(_target_yaw_cd, _target_speed_ms);
-    // ModeGuided::update();
-
-    // 台架/无轮速计：闭环速度 PID 无反馈，油门恒为 0，仅转向差速有输出。
-    // 开环：线速度指令 → 油门百分比，航向仍用 calc_steering_to_heading。
-    calc_steering_to_heading(_target_yaw_cd);
-
-    const float speed_max = calc_speed_max(g.speed_cruise, g.throttle_cruise * 0.01f);
-    float throttle_pct = 100.0f * (_target_speed_ms / speed_max);
-    throttle_pct = constrain_float(throttle_pct, -100.0f, 100.0f);
-    g2.motors.set_throttle(throttle_pct);
+    // 复用 ModeGuided 的 HeadingAndSpeed 能力：
+    set_desired_heading_and_speed(_target_yaw_cd, _target_speed_ms);
+    ModeGuided::update();
 }
 
 void ModeVGSolar::update_yawrate()
