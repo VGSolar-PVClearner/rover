@@ -7,6 +7,9 @@
 #include <AP_Math/AP_Math.h>
 #include <AP_Brush/AP_Brush.h>
 
+// AP_CompanionComputer 实现：串口收发、NCU 指令解析、FCU 反馈组帧。
+// 运动/导航/转弯/急停执行逻辑在 Rover/mode_vgsolar.cpp。
+
 const AP_Param::GroupInfo AP_CompanionComputer::var_info[] = {
     // @Param: ENABLE
     // @DisplayName: Enable Companion computer
@@ -76,7 +79,8 @@ void AP_CompanionComputer::update()
     }
 }
 
-// NCU → FCU 帧接收状态机，详见 AP_CompanionComputer_config.h
+// 逐字节状态机；校验失败静默丢弃；合法帧按 _cmd_type 分发 parse_*
+// 缓冲区布局：byte0~1 帧头，2 源，3 类型，4 长度，5.. 数据体，末2 校验+0xFF
 void AP_CompanionComputer::process_received_data(uint8_t oneByte)
 {
     const uint32_t now = AP_HAL::millis();
@@ -179,6 +183,7 @@ void AP_CompanionComputer::process_received_data(uint8_t oneByte)
     }
 }
 
+// NCU 指令解析（写缓存 + 按需 ACK；运动执行由 ModeVGSolar 消费 _new_cmd_flags）
 void AP_CompanionComputer::parse_speed_ctrl()
 {
     _latest_speed_ctrl = PacketBuilder::deserialize<SpeedCtrlData>(_rx_buffer.data() + 5);
@@ -195,6 +200,7 @@ void AP_CompanionComputer::parse_turn()
 
 void AP_CompanionComputer::parse_param_write()
 {
+    // 成功：0x02 ACK + 0x03 回传；失败：仅 0x02 FAILED
     const ParamWriteData cmd = PacketBuilder::deserialize<ParamWriteData>(_rx_buffer.data() + 5);
 
     ParamFeedbackData feedback {};
@@ -220,6 +226,7 @@ void AP_CompanionComputer::parse_param_read()
 
 void AP_CompanionComputer::parse_system_ctrl()
 {
+    // 仅缓存 + ACK + _estop_active；SYS_CMD_REBOOT/SHUTDOWN 由 ModeVGSolar 执行
     _latest_system_ctrl = PacketBuilder::deserialize<SystemCtrlData>(_rx_buffer.data() + 5);
     _new_cmd_flags |= (1<<3);
 
@@ -250,6 +257,7 @@ void AP_CompanionComputer::set_nav_status(const NavStatusData &data, bool send_n
     _nav_status_send = send_nav;
 }
 
+// 校验和：byte2（源地址）..byte(末-2) 累加低 8 位；帧头 0xA5 0x5A 不参与
 size_t AP_CompanionComputer::build_frame(uint8_t cmd_content, const uint8_t *body, uint8_t body_len,
         uint8_t *out, size_t out_size) const
 {
@@ -271,6 +279,8 @@ size_t AP_CompanionComputer::build_frame(uint8_t cmd_content, const uint8_t *bod
     return frame_len;
 }
 
+// EVENT：tx 满仍尝试写（可能阻塞/部分写），计 _tx_drop_event
+// PERIODIC：tx 满直接丢帧，计 _tx_drop_periodic，下周期再发
 bool AP_CompanionComputer::send_frame(const uint8_t *data, size_t len, TxPriority pri)
 {
     if (!_enable || _uart == nullptr || data == nullptr || len == 0) {
@@ -308,6 +318,7 @@ void AP_CompanionComputer::send_nav_data()
     }
 }
 
+// 需 BATT_MONITOR + BATT_CAPACITY + 电流监测；无有效读数返回 false（台架不误报）
 bool AP_CompanionComputer::is_low_battery() const
 {
     uint8_t batt_pct = 0;
@@ -388,11 +399,13 @@ bool AP_CompanionComputer::read_runtime_param(uint16_t param_index, ParamFeedbac
     }
 }
 
+// 功率档位 0x0104 单独写不输出 PWM；需 0x0101/2/3 开刷后 apply_brush_runtime_params 才写 PWM
 void AP_CompanionComputer::apply_brush_runtime_params()
 {
     AP::brush().update(_brush_front_on != 0, _brush_rear_on != 0, uint8_t(_brush_power_pct));
 }
 
+// 清零内存参数并 AP::brush().stop_all()；急停/超时/低电压/退出 VGSL 时由 Mode 调用
 void AP_CompanionComputer::stop_brushes()
 {
     _brush_front_on = 0;
@@ -463,6 +476,7 @@ void AP_CompanionComputer::reset_mode_status()
     _nav_status_send = false;
 }
 
+// bit8 低电压：置位后 motion_state 可能为 0x05（FAULT_MOTION_MASK 含 FAULT_LOW_VOLTAGE）
 uint16_t AP_CompanionComputer::collect_sensor_faults() const
 {
     uint16_t faults = 0;
@@ -502,6 +516,7 @@ uint16_t AP_CompanionComputer::collect_sensor_faults() const
     return faults;
 }
 
+// 速度死区 ±5 cm/s 内视为 STOPPED；|velocity|>5 判前进/后退
 uint8_t AP_CompanionComputer::compute_motion_state(int16_t velocity_cms, bool estop, bool turning, uint16_t fault_code)
 {
     constexpr uint16_t FAULT_MOTION_MASK =
@@ -546,6 +561,7 @@ static uint8_t map_gps_status_to_protocol(AP_GPS::GPS_Status status)
     }
 }
 
+// 10Hz 状态反馈 0xBB 0x01；须在 VGSL 下先 publish_status_feedback() 再调用
 void AP_CompanionComputer::send_data()
 {
     if (!_enable || _uart == nullptr) {
@@ -568,6 +584,7 @@ void AP_CompanionComputer::send_data()
     //     status_data.battery_percent = percentage;
     // }
 
+    // 暂固定为100
     status_data.battery_percent = 100;
 
     // 经纬度 (度 × 1e7)

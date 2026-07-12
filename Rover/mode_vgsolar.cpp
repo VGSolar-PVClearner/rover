@@ -5,6 +5,31 @@
 
 #if MODE_VGSOLAR_ENABLED
 
+/*
+ * ModeVGSolar（模式17）— VGSolar 光伏清洗机器人主控模式。
+ *
+ * 继承 ModeGuided，复用其航向/角速度/航点导航底层能力。
+ *
+ * 架构：
+ *   NCU UART → AP_CompanionComputer（解析、ACK、状态帧）
+ *            → 本文件 read_companion_commands() 消费指令
+ *            → VGSubMode 子状态机（STANDBY/YAW/YAWRATE/TURN/NAV/ESTOP）
+ *            → AP_SuctionCup / AP_Brush / ModeGuided 执行
+ *
+ * Rover 调度：
+ *   50Hz  companion_computer.update()     收 NCU 帧
+ *   主循环 mode_vgsolar.update()           本文件主逻辑
+ *   10Hz  publish_*() + send_data()       状态/导航反馈上行
+ *
+ * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
+ * 安全：倾角>30° 或 NCU 200ms 无帧 → freeze 吸盘 + safety_hold；条件恢复后 raise
+ *
+ */
+
+// ---------------------------------------------------------------------------
+// 地面站参数 VGS_*
+// ---------------------------------------------------------------------------
+
 const AP_Param::GroupInfo ModeVGSolar::var_info[] = {
 
     // @Param: ENABLE
@@ -50,6 +75,7 @@ const AP_Param::GroupInfo ModeVGSolar::var_info[] = {
     AP_GROUPEND
 };
 
+// 子模式/转弯/导航相关运行时状态初始化
 ModeVGSolar::ModeVGSolar(void) :
     _vg_submode(VGSubMode::STANDBY),
     _submode_before_turn(VGSubMode::STANDBY),
@@ -95,6 +121,7 @@ bool ModeVGSolar::_enter()
         return false;
     }
 
+    // 子模式与故障标志复位
     _vg_submode = VGSubMode::STANDBY;
     _turn_phase = TurnPhase::IDLE;
     _target_speed_ms = 0.0f;
@@ -105,6 +132,7 @@ bool ModeVGSolar::_enter()
     // 记录 NED 全局原点，供后续 NED 导航换算经纬度
     capture_ned_origin();
 
+    // 外设激活：滚刷/吸盘仅在 VGSL 内输出 PWM
     rover.companion_computer.stop_brushes();
     AP::brush().set_active(true);
     AP::suction_cup().clear_fault();
@@ -187,6 +215,7 @@ void ModeVGSolar::update()
     }
 }
 
+// NCU 状态上报（Rover.cpp 10Hz：publish_* → companion_computer.send_data/send_nav_data）
 void ModeVGSolar::publish_status_feedback()
 {
     uint8_t control_mode = uint8_t(ControlMode::STANDBY);
@@ -214,7 +243,7 @@ void ModeVGSolar::publish_status_feedback()
     }
 
     const bool estop = (_vg_submode == VGSubMode::ESTOP);
-    // protocol：motion_state=0x03 仅吸盘已吸附且尚未抬起期间
+    // motion_state=0x03 仅吸盘已吸附且尚未抬起期间
     const bool turning = (_vg_submode == VGSubMode::TURN)
                          && AP::suction_cup().is_lowered()
                          && !AP::suction_cup().is_raised()
@@ -227,6 +256,7 @@ void ModeVGSolar::publish_status_feedback()
 
 void ModeVGSolar::publish_nav_status_feedback()
 {
+    // 终态（到达/失败/取消）发单帧；导航中 10Hz 持续上报距离与航向误差
     NavStatusData data {};
     bool send_nav = false;
 
@@ -271,6 +301,8 @@ void ModeVGSolar::publish_nav_status_feedback()
     rover.companion_computer.set_nav_status(data, send_nav);
 }
 
+// NCU 指令消费（从 AP_CompanionComputer 缓存读取，置 _last_ncu_cmd_ms 刷新心跳）
+// 优先级：系统控制 > 转弯 > 导航 > 速度控制
 void ModeVGSolar::read_companion_commands()
 {
     auto &cc = rover.companion_computer;
@@ -308,6 +340,7 @@ void ModeVGSolar::read_companion_commands()
         case SYS_CMD_REBOOT:
             hal.scheduler->reboot(false);
             break;
+        // SYS_CMD_SHUTDOWN(0x04) 关机未实现
         default:
             break;
         }
@@ -477,6 +510,7 @@ void ModeVGSolar::read_companion_commands()
     }
 }
 
+// 子模式执行：待机 / 航向角 / 偏航速率 / 导航
 void ModeVGSolar::update_standby()
 {
     stop_vehicle();
@@ -494,6 +528,7 @@ void ModeVGSolar::update_yawrate()
     // NCU 协议角速度正=左转；ArduPilot get_steering_out_rate 正=右转
     const float turn_rate_cds = -_target_yaw_rate_cds;
 
+    // NCU 线速度/角速度均为 0：清转向积分并停车，避免目标突然变成0后，车还有小幅度转向
     if (is_zero(_target_speed_ms) && is_zero(turn_rate_cds)) {
         attitude_control.relax_I();
         stop_vehicle();
@@ -507,7 +542,7 @@ void ModeVGSolar::update_yawrate()
 
 void ModeVGSolar::update_nav()
 {
-    //位置已到达，原地旋转到 arrival_yaw
+    // 两阶段导航：CRUISE 沿航点行驶 →（可选）YAW_ALIGN 原地对 arrival_yaw
     if (_nav_phase == NavPhase::YAW_ALIGN) {
         calc_steering_to_heading(_arrival_yaw_target_cd);
         g2.motors.set_throttle(0.0f);
@@ -587,6 +622,7 @@ void ModeVGSolar::update_estop()
     rover.companion_computer.stop_brushes();
 }
 
+// 吸盘故障同步与转弯中止
 void ModeVGSolar::sync_suction_fault_flags()
 {
     if (AP::suction_cup().has_fault()) {
@@ -620,6 +656,7 @@ void ModeVGSolar::complete_turn()
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN complete, restored");
 }
 
+// 安全保持：倾角过大 / NCU 通信超时 → freeze 吸盘，条件满足后自动恢复
 void ModeVGSolar::check_tilt_safety()
 {
     // |roll|/|pitch|>30° 且已吸附：freeze 吸盘；bit9 由 collect_sensor_faults 上报
@@ -744,6 +781,8 @@ void ModeVGSolar::try_recover_safety_hold()
     }
 }
 
+// 转弯序列（NCU 0x02）
+// 阶段：停车 → 等稳 500ms → lower 吸盘 → 原地/行进转弯 → raise 吸盘 → 恢复原子模式
 void ModeVGSolar::start_turn(const TurnData &cmd)
 {
     // 安全保持/吸盘 busy/故障时拒绝新转弯
@@ -820,6 +859,7 @@ void ModeVGSolar::update_turn()
     switch (_turn_phase) {
 
     case TurnPhase::STOPPING: {
+        // 减速至零速后进入等待
         const bool stopped = stop_vehicle();
         if (stopped) {
             _turn_phase = TurnPhase::WAIT_STOPPED;
@@ -829,6 +869,7 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::WAIT_STOPPED: {
+        // 停稳 500ms 后再放吸盘，避免惯性滑动
         if (now - _turn_phase_start_ms > 500) {
             _turn_phase = TurnPhase::LOWER_SUCTION;
             _turn_phase_start_ms = now;
@@ -837,6 +878,7 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::LOWER_SUCTION: {
+        // 异步 lower；is_lowered() 后进入 TURNING（motion_state=0x03）
         if (!scup.is_busy() && !scup.is_lowered()) {
             if (!scup.lower()) {
                 abort_turn_suction_fault();
@@ -856,6 +898,7 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::TURNING: {
+        // 累计转角达目标或超时 → 停车并进入 RAISE_SUCTION
         const float current_yaw_deg = wrap_180(degrees(ahrs.get_yaw()));
         const float step_deg = wrap_180(current_yaw_deg - _last_turn_yaw_deg);
         _turn_accumulated_deg += fabsf(step_deg);
@@ -886,6 +929,7 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::RAISE_SUCTION: {
+        // 异步 raise；is_raised() 后 complete_turn() 恢复 _submode_before_turn
         if (!scup.is_busy() && !scup.is_raised()) {
             if (scup.is_lowered() || scup.is_frozen()) {
                 if (!scup.raise()) {
@@ -913,6 +957,7 @@ void ModeVGSolar::update_turn()
     send_turn_pwm_gcs();
 }
 
+// 导航取消与 NCU 心跳超时（200ms，参数帧不刷新 _last_ncu_cmd_ms）
 void ModeVGSolar::cancel_navigation()
 {
     stop_vehicle();
@@ -980,6 +1025,7 @@ void ModeVGSolar::check_ncu_timeout()
     }
 }
 
+// 距离查询与滚刷钩子（滚刷主路径走 CompanionComputer 参数 0x0101~0x0104）
 float ModeVGSolar::get_distance_to_destination() const
 {
     if (_vg_submode == VGSubMode::NAV) {
@@ -991,6 +1037,7 @@ float ModeVGSolar::get_distance_to_destination() const
 
 void ModeVGSolar::set_brush_control(uint8_t brush_id, bool turn_on)
 {
+    // Rover 框架回调；VGSolar 滚刷由 NCU 参数控制，此处仅处理关刷
     (void)brush_id;
     if (!turn_on) {
         rover.companion_computer.stop_brushes();

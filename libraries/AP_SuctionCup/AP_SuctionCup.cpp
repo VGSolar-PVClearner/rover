@@ -3,6 +3,12 @@
 #include <GCS_MAVLink/GCS.h>
 #include <AP_Math/AP_Math.h>
 
+/*
+ * AP_SuctionCup 实现：吸盘三路 PWM 异步状态机。
+ * 不解析 NCU 协议；时序参数通过 SCUP_* 地面站参数可调。
+ * 单例由 Rover ParametersG2::suction_cup 构造。
+ */
+
 AP_SuctionCup *AP_SuctionCup::_singleton;
 
 const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
@@ -146,7 +152,7 @@ void AP_SuctionCup::update()
         return;
     }
 
-    // 冻结态：不再推进状态机，仅维持关泵+密封
+    // 冻结态：不再推进状态机，仅维持关泵+密封（或 LOWERING 中途的部分阀位）
     if (_frozen) {
         apply_frozen_hold();
         log_status();
@@ -167,7 +173,7 @@ void AP_SuctionCup::update()
         update_raising(now);
         break;
     case State::LOWERED:
-        apply_lowered_hold();  // 转向阶段关泵保密封
+        apply_lowered_hold();  // 转向阶段持续维持吸附（关泵保密封）
         break;
     default:
         break;
@@ -176,6 +182,7 @@ void AP_SuctionCup::update()
     log_status();
 }
 
+// 对外动作 API（由 ModeVGSolar 调用）
 bool AP_SuctionCup::lower()
 {
     if (!_active || _frozen || !can_start_sequence()) {
@@ -212,6 +219,7 @@ void AP_SuctionCup::freeze()
 
     switch (prev) {
     case State::LOWERING:
+        // 吸附未完成：记为未建立负压，unfreeze 后回 RAISED
         _frozen_vacuum_ready = false;
         _state = State::FROZEN;
         apply_frozen_hold();
@@ -228,7 +236,7 @@ void AP_SuctionCup::freeze()
         break;
 
     case State::RAISING:
-        // 抬起中断：仍视为已吸附，保持密封
+        // 抬起中断：仍视为已吸附，保持密封防掉落
         _frozen_vacuum_ready = true;
         _state = State::FROZEN;
         apply_frozen_hold();
@@ -255,7 +263,7 @@ void AP_SuctionCup::emergency_release()
         return;
     }
 
-    // 已在释放中则不重启序列
+    // 已在释放中则不重启序列，避免阀/泵反复切换
     if (_state == State::RAISING) {
         return;
     }
@@ -293,6 +301,7 @@ void AP_SuctionCup::unfreeze()
 
     _phase = Phase::NONE;
     if (_frozen_vacuum_ready) {
+        // 冻结前已吸附：恢复 LOWERED，可继续转弯或 raise
         _state = State::LOWERED;
         apply_lowered_hold();
     } else {
@@ -302,6 +311,7 @@ void AP_SuctionCup::unfreeze()
     }
 }
 
+// 状态查询
 bool AP_SuctionCup::is_busy() const
 {
     return _state == State::LOWERING || _state == State::RAISING;
@@ -325,6 +335,7 @@ bool AP_SuctionCup::can_start_sequence() const
     return !is_busy();
 }
 
+// 序列启动与故障
 void AP_SuctionCup::begin_lower()
 {
     const uint32_t now = AP_HAL::millis();
@@ -334,7 +345,7 @@ void AP_SuctionCup::begin_lower()
     _phase_start_ms = now;
     _sequence_start_ms = now;
 
-    // 吸附第一步：先放气、停泵，再放下升降（避免带压硬顶）
+    // 吸附第一步：先放气、停泵，再放下升降（避免带压硬顶光伏板）
     write_valve(_valve_pwm_vent.get());
     write_pump(PWM_STOP_US);
     write_lift(_lift_pwm_lowered.get());
@@ -361,12 +372,13 @@ void AP_SuctionCup::set_fault()
 {
     _phase = Phase::NONE;
     _state = State::FAULT;
-    // 故障安全：停泵并放气，避免泵空转或密封异常保压
+    // 故障安全：停泵并放气，避免泵空转或异常保压
     write_pump(PWM_STOP_US);
     write_valve(_valve_pwm_vent.get());
     log_status(true);
 }
 
+// PWM 保持态（各 State 下的硬件输出组合）
 void AP_SuctionCup::apply_safe_idle()
 {
     write_pump(PWM_STOP_US);
@@ -399,6 +411,7 @@ void AP_SuctionCup::apply_frozen_hold()
     if (_state == State::LOWERING) {
         write_pump(PWM_STOP_US);
         write_lift(_lift_pwm_lowered.get());
+        // 若已过密封步骤则保持密封，否则阀仍可能在放气位
         if (_phase >= Phase::LOWER_SEAL) {
             write_valve(_valve_pwm_seal.get());
         }
@@ -411,7 +424,7 @@ uint16_t AP_SuctionCup::calc_pump_pwm_us() const
     if (pwr == 0) {
         return PWM_STOP_US;
     }
-    // 100% → 2000us，0% → 1000us，线性映射
+    // SCUP_PUMP_PWR：0% → 1000 µs，100% → 2000 µs 线性映射
     const float scaled = float(pwr) / 100.0f;
     return uint16_t(PWM_STOP_US + scaled * float(PWM_MAX_US - PWM_STOP_US));
 }
@@ -434,6 +447,7 @@ void AP_SuctionCup::write_pump(uint16_t pwm_us)
     _last_pump_pwm = pwm_us;
 }
 
+// 吸附 / 释放子状态机（每 update() 推进一步）
 void AP_SuctionCup::update_lowering(uint32_t now)
 {
     switch (_phase) {
@@ -446,6 +460,7 @@ void AP_SuctionCup::update_lowering(uint32_t now)
         break;
 
     case Phase::LOWER_SEAL:
+        // 密封后立即开泵（无额外等待）
         _phase = Phase::LOWER_START_PUMP;
         _phase_start_ms = now;
         write_pump(calc_pump_pwm_us());
@@ -536,10 +551,6 @@ void AP_SuctionCup::log_status(bool force)
     _last_logged_phase = _phase;
     _last_log_ms = now;
 
-    // gcs().send_text(MAV_SEVERITY_INFO,
-    //                 "VG_SCUP: st=%u ph=%u frz=%u lift=%u valve=%u pump=%u",
-    //                 unsigned(_state), unsigned(_phase), unsigned(_frozen),
-    //                 unsigned(_last_lift_pwm), unsigned(_last_valve_pwm), unsigned(_last_pump_pwm));
 }
 
 namespace AP
