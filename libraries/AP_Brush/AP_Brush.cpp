@@ -3,6 +3,11 @@
 #include <GCS_MAVLink/GCS.h>
 #include <AP_Math/AP_Math.h>
 
+/*
+ * AP_Brush 实现：滚刷 PWM 换算与 SRV_Channel 输出。
+ * 参数来源见 AP_CompanionComputer::apply_brush_runtime_params()。
+ */
+
 AP_Brush *AP_Brush::_singleton;
 
 AP_Brush::AP_Brush()
@@ -28,8 +33,10 @@ void AP_Brush::set_active(bool active)
 {
     _active = active;
     if (!_active) {
+        // 离开 VGSL：立即停刷，不保留上一周期 PWM
         write_outputs(false, false, 0);
     } else {
+        // 进入 VGSL：按已缓存的期望状态恢复输出（通常为全关，_enter 会先 stop_brushes）
         write_outputs(_front_on, _rear_on, _power_pct);
     }
 }
@@ -41,6 +48,7 @@ void AP_Brush::update(bool front_on, bool rear_on, uint8_t power_pct)
     _power_pct = power_pct;
 
     if (!_active) {
+        // 非 VGSL：只记期望，不写电调（防止其他模式误触滚刷）
         return;
     }
 
@@ -52,6 +60,7 @@ void AP_Brush::stop_all()
     _front_on = false;
     _rear_on = false;
     _power_pct = 0;
+    // 无论 active 与否都写 1000 µs，确保硬件停转
     write_outputs(false, false, 0);
 }
 
@@ -94,6 +103,7 @@ void AP_Brush::log_brush_status(bool front_on, bool rear_on, uint8_t power_pct,
     if (!state_changed && !pwm_changed) {
         return;
     }
+    // 开关/功率未变、仅 PWM 抖动时 2s 限速，避免刷屏
     if (!state_changed && (now - _last_log_ms) < LOG_INTERVAL_MS) {
         return;
     }

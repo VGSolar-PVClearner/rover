@@ -174,9 +174,6 @@
 * 运动状态 motion_state (MotionState):
 *   0x00 STOPPED  0x01 FORWARD  0x02 BACKWARD  0x03 TURNING  0x04 ESTOP  0x05 FAULT
 *
-*
-* *********************************************
-*
 * =============================================================================
 */
 
@@ -299,7 +296,7 @@ constexpr uint8_t COMPANION_RECV_TOTAL_LENGTH = FRAME_OVERHEAD + NCU_RX_MAX_DATA
 constexpr uint8_t FCU_DATA_LEN_STATUS      = 26;
 constexpr uint8_t FCU_DATA_LEN_CMD_ACK     = 2;
 constexpr uint8_t FCU_DATA_LEN_PARAM       = 7;
-constexpr uint8_t FCU_DATA_LEN_NAV_STATUS  = 8;  // protocol 5.4: nav_state+coord_mode+dist32+heading_err
+constexpr uint8_t FCU_DATA_LEN_NAV_STATUS  = 8;  // nav_state+coord_mode+dist32+heading_err
 
 constexpr uint8_t FCU_TX_MAX_DATA_LEN  = FCU_DATA_LEN_STATUS;
 constexpr uint8_t COMPANION_SEND_TOTAL_LENGTH = FRAME_OVERHEAD + FCU_TX_MAX_DATA_LEN;
@@ -314,136 +311,85 @@ constexpr uint32_t NCU_HEARTBEAT_TIMEOUT_MS = 200;
 // 数据体结构体
 #pragma pack(push, 1)
 
+// NCU 0x01 速度控制数据体（5 字节）
 struct SpeedCtrlData {
-    uint8_t control_mode;
-    int16_t velocity;
-    int16_t yaw_data;
+    uint8_t control_mode;  // SPEED_MODE_YAW / SPEED_MODE_YAWRATE
+    int16_t velocity;      // cm/s；正=前进
+    int16_t yaw_data;      // YAW: 0~36000(0.01°)；YAWRATE: -18000~18000(0.01°/s)，正=左转
 };
 
 struct TurnData {
-    uint8_t turn_mode;
-    uint8_t direction;
-    uint16_t target_angle;
-    uint16_t angular_vel;
+    uint8_t turn_mode;      // TURN_MODE_SPOT / TURN_MODE_MOVING
+    uint8_t direction;     // TURN_DIR_LEFT / TURN_DIR_RIGHT
+    uint16_t target_angle; // 相对当前航向转角，0.01°
+    uint16_t angular_vel;  // 角速度上限，0.01°/s
 };
 
+// NCU 0x03 参数写入数据体（7 字节）
 struct ParamWriteData {
     uint16_t param_index;
     uint8_t  param_type;
     uint32_t param_value;
 };
 
+// NCU 0x04 参数读取数据体（2 字节）
 struct ParamReadData {
     uint16_t param_index;
 };
 
+// NCU 0x05 系统控制数据体（1 字节）
 struct SystemCtrlData {
-    uint8_t command;
+    uint8_t command;  // SYS_CMD_ESTOP / ESTOP_CLEAR / REBOOT / SHUTDOWN
 };
 
+// NCU 0x06 位置导航数据体（15 字节）
 struct PositionData {
-    uint8_t  nav_mode;
-    int32_t  target_x;
-    int32_t  target_y;
+    uint8_t  nav_mode;         // NAV_MODE_GPS / NED / BODY / CANCEL
+    int32_t  target_x;         // GPS: 经度×1e7；NED: 北向 cm；Body: 前向 cm
+    int32_t  target_y;         // GPS: 纬度×1e7；NED: 东向 cm；Body: 右向 cm
     int16_t  arrival_yaw;      // 0xFFFF(NAV_YAW_UNSPECIFIED) 表示到达后不指定航向
     uint16_t arrival_radius;   // cm；0 表示使用 WP_RADIUS 默认值
     int16_t  cruise_speed;     // cm/s；0 用 FCU 默认；负值表示倒车接近
 };
 
 struct StatusFeedbackData {
-    uint8_t  battery_percent;
-    int32_t  longitude;
+    uint8_t  battery_percent;  // 电池电量百分比
+    int32_t  longitude;        // 度×1e7
     int32_t  latitude;
     uint16_t heading;          // 0~36000, 0.01°；与 ahrs.yaw_sensor（厘度）同语义
-    int16_t  velocity;
-    int16_t  left_track_vel;
-    int16_t  right_track_vel;
-    int16_t  roll;
+    int16_t  velocity;         // 地速 cm/s（AHRS groundspeed）
+    int16_t  left_track_vel;   // WENC instance 0
+    int16_t  right_track_vel;  // WENC2 instance 1
+    int16_t  roll;             // 0.01°
     int16_t  pitch;
-    uint8_t  control_mode;
-    uint8_t  motion_state;
-    uint16_t fault_code;
-    uint8_t  gps_status;
+    uint8_t  control_mode;     // ControlMode；非 VGSL 时 STANDBY
+    uint8_t  motion_state;     // MotionState；由 compute_motion_state() 计算
+    uint16_t fault_code;       // _fb_fault_bits | collect_sensor_faults()
+    uint8_t  gps_status;       // 0~3，经 map_gps_status_to_protocol 映射
 };
 
+// FCU 0x02 指令应答数据体（2 字节）
 struct CmdAckData {
-    uint8_t cmd_type;
-    uint8_t status;
+    uint8_t cmd_type;  // 对应 NCU 指令类型 NCU_CMD_*
+    uint8_t status;    // CMD_ACK_SUCCESS / CMD_ACK_FAILED
 };
 
+// FCU 0x03 参数反馈数据体（7 字节）
 struct ParamFeedbackData {
     uint16_t param_index;
     uint8_t  param_type;
-    uint32_t param_value;
+    uint32_t param_value;  // 读/写成功后的当前值
 };
 
+// FCU 0x04 导航状态数据体（8 字节）；由 Mode publish_nav_status_feedback() 填充
 struct NavStatusData {
-    uint8_t  nav_state;
-    uint8_t  coord_mode;
+    uint8_t  nav_state;           // NAV_STATE_*；空闲时 Mode 不发帧
+    uint8_t  coord_mode;          // 与下发 NAV_MODE_* 一致
     uint32_t distance_to_target;  // cm, uint32
     int16_t  heading_error;       // 0.01°；正值=目标在左侧
 };
 
-// FCU 发送帧（含帧头尾）
-struct StatusFeedbackFrame {
-    uint8_t header1;
-    uint8_t header2;
-    uint8_t cmd_source;
-    uint8_t cmd_content;
-    uint8_t data_length;
-    StatusFeedbackData data;
-    uint8_t checksum;
-    uint8_t end_sign;
-};
-
-struct ParamFeedbackFrame {
-    uint8_t header1;
-    uint8_t header2;
-    uint8_t cmd_source;
-    uint8_t cmd_content;
-    uint8_t data_length;
-    ParamFeedbackData data;
-    uint8_t checksum;
-    uint8_t end_sign;
-};
-
-struct NavStatusFeedbackFrame {
-    uint8_t header1;
-    uint8_t header2;
-    uint8_t cmd_source;
-    uint8_t cmd_content;
-    uint8_t data_length;
-    NavStatusData data;
-    uint8_t checksum;
-    uint8_t end_sign;
-};
-
 #pragma pack(pop)
-
-// 内部解析结构
-struct ParsedSpeedCtrl {
-    uint8_t mode;
-    float velocity_cms;
-    float yaw_value;
-};
-
-struct ParsedTurn {
-    uint8_t mode;
-    uint8_t direction;
-    float target_angle_deg;
-    float angular_vel_dps;
-};
-
-struct ParsedPosition {
-    uint8_t  nav_mode;
-    double   tgt_lat;
-    double   tgt_lon;
-    float    tgt_north_cm;
-    float    tgt_east_cm;
-    float    arrival_yaw_deg;
-    uint16_t arrival_radius_cm;
-    int16_t  cruise_speed_cms;
-};
 
 // 数据包构建器
 class PacketBuilder

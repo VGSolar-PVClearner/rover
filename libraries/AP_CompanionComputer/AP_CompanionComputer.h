@@ -6,11 +6,21 @@
 #include "AP_CompanionComputer_config.h"
 
 /*
-  NCU (上位机) ↔ FCU (飞控) 串口通信。
-  帧格式与指令定义见 AP_CompanionComputer_config.h。
-  Rover 通过 receive_companion_computer() / send2_companion_computer() 调度 update() /
-  send_data() / send_nav_data()。事件帧 (0x02/0x03) 在 parse/mode 内即时发送；周期帧
-  (0x01/0x04) 在 10Hz 任务内发送；底层均经 send_frame() 写串口。
+ * VGSolar NCU（导引单元，0xAA）↔ FCU（飞控，0xBB）串口通讯库。
+ *
+ * 职责边界：
+ *   本库：帧收发、解析、ACK/参数反馈、状态帧填充、滚刷运行参数缓存。
+ *   ModeVGSolar：运动控制、子模式状态机、心跳超时、吸盘/导航/转弯执行。
+ *
+ * 调度（Rover.cpp）：
+ *   50Hz  receive_companion_computer() → update()        收 NCU 帧
+ *   10Hz  send2_companion_computer()   → publish_*()     Mode 写入模式侧字段
+ *                                       → send_data()     0xBB 0x01 状态反馈
+ *                                       → send_nav_data() 0xBB 0x04 导航状态  （导航现在用不到）
+ *
+ * 上行发送时机：
+ *   事件帧 0x02/0x03 — parse_* 或 Mode 调用时立即 send_frame(EVENT)
+ *   周期帧 0x01/0x04 — 10Hz 任务内 send_frame(PERIODIC)
  */
 class AP_CompanionComputer
 {
@@ -26,9 +36,9 @@ public:
         return _singleton;
     }
 
-    void init();
-    void update();
-    void send_data();
+    void init();   // 初始化串口
+    void update(); // 解析NCU数据
+    void send_data(); // 发送FCU状态
 
     // ModeVGSolar 导航 ACK（0xBB 0x02，cmd_type=NCU_CMD_POSITION）
     void send_position_ack(uint8_t status);
@@ -41,7 +51,8 @@ public:
     // 离开 VGSOLAR 模式时清零模式侧反馈字段
     void reset_mode_status();
 
-    // NCU 指令缓存（供 ModeVGSolar 读取）
+    // --- NCU 指令缓存（parse 写入，ModeVGSolar 通过 is_new_* 消费）---
+    // _new_cmd_flags: bit0=SPEED bit1=TURN bit2=POSITION bit3=SYSTEM
     const SpeedCtrlData& get_latest_speed_ctrl() const
     {
         return _latest_speed_ctrl;
@@ -93,6 +104,7 @@ public:
         _new_cmd_flags &= ~(1<<3);
     }
 
+    // 急停锁存；parse_system_ctrl 置位，Mode 层执行停车/关刷/吸盘
     bool is_estop_active() const
     {
         return _estop_active;
@@ -110,8 +122,8 @@ private:
     static AP_CompanionComputer *_singleton;
 
     enum class TxPriority : uint8_t {
-        EVENT,    // 0x02 / 0x03：按需即时
-        PERIODIC, // 0x01 / 0x04：10Hz 任务
+        EVENT,    // 0x02/0x03：按需即时；tx 满时仍尝试写并计 _tx_drop_event
+        PERIODIC, // 0x01/0x04：10Hz；tx 满时丢弃本帧并计 _tx_drop_periodic
     };
 
     // Parameters
@@ -148,15 +160,15 @@ private:
     uint8_t _new_cmd_flags;
     bool _estop_active;
 
-    // 状态反馈中由 ModeVGSolar 提供的字段（与 collect_sensor_faults 合并后写入 send_data）
+    // Mode 写入的控制模式/急停/转弯/模式侧故障；与 collect_sensor_faults() 在 send_data 中合并
     uint8_t _fb_control_mode;
     bool _fb_estop;
     bool _fb_turning;
-    uint16_t _fb_fault_bits;
-    bool _fb_mode_status_valid;
+    uint16_t _fb_fault_bits;      // bit7 超时、bit10 导航失败、bit4 吸盘等（Mode 侧）
+    bool _fb_mode_status_valid;   // 非 VGSL 或未 publish 时为 false，control_mode 回退 STANDBY
 
-    NavStatusData _nav_status;
-    bool _nav_status_send;
+    NavStatusData _nav_status;    // Mode publish_nav_status_feedback() 写入
+    bool _nav_status_send;        // true 时本周期 send_nav_data() 发一帧后清零
 
     void process_received_data(uint8_t oneByte);
     void parse_speed_ctrl();
@@ -187,7 +199,9 @@ private:
     uint32_t _brush_rear_on;
     uint32_t _brush_power_pct;
 
+    // 传感器侧故障（IMU/GPS/轮速计/倾角/低电压）；与 _fb_fault_bits 按位或后上报
     uint16_t collect_sensor_faults() const;
+    // 根据 fault/estop/turning/velocity 计算 motion_state；FAULT 优先于 ESTOP
     static uint8_t compute_motion_state(int16_t velocity_cms, bool estop, bool turning, uint16_t fault_code);
 };
 
