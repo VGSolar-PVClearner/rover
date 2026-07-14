@@ -20,7 +20,7 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @Units: ms
     // @Range: 100 5000
     // @User: Standard
-    AP_GROUPINFO("LIFT_DLY_MS", 1, AP_SuctionCup, _lift_delay_ms, 500),
+    AP_GROUPINFO("LIFT_DLY_MS", 1, AP_SuctionCup, _lift_delay_ms, 2000),
 
     // @Param: VAC_DLY_MS
     // @DisplayName: Vacuum build time
@@ -28,7 +28,7 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @Units: ms
     // @Range: 100 10000
     // @User: Standard
-    AP_GROUPINFO("VAC_DLY_MS", 2, AP_SuctionCup, _vacuum_delay_ms, 800),
+    AP_GROUPINFO("VAC_DLY_MS", 2, AP_SuctionCup, _vacuum_delay_ms, 3000),
 
     // @Param: VENT_DLY_MS
     // @DisplayName: Vent delay before lift
@@ -36,7 +36,7 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @Units: ms
     // @Range: 100 5000
     // @User: Standard
-    AP_GROUPINFO("VENT_DLY_MS", 3, AP_SuctionCup, _vent_delay_ms, 400),
+    AP_GROUPINFO("VENT_DLY_MS", 3, AP_SuctionCup, _vent_delay_ms, 2000),
 
     // @Param: ACT_TOUT_MS
     // @DisplayName: Suction action timeout
@@ -44,7 +44,7 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @Units: ms
     // @Range: 1000 30000
     // @User: Standard
-    AP_GROUPINFO("ACT_TOUT_MS", 4, AP_SuctionCup, _action_timeout_ms, 5000),
+    AP_GROUPINFO("ACT_TOUT_MS", 4, AP_SuctionCup, _action_timeout_ms, 20000),
 
     // @Param: LIFT_PWM_R
     // @DisplayName: Lift PWM raised
@@ -92,6 +92,7 @@ AP_SuctionCup::AP_SuctionCup()
 
     _active = false;
     _frozen = false;
+    _frozen_vacuum_ready = false;
     _state = State::RAISED;
     _phase = Phase::NONE;
     _phase_start_ms = 0;
@@ -165,6 +166,9 @@ void AP_SuctionCup::update()
     case State::RAISING:
         update_raising(now);
         break;
+    case State::LOWERED:
+        apply_lowered_hold();  // 转向阶段关泵保密封
+        break;
     default:
         break;
     }
@@ -203,21 +207,35 @@ void AP_SuctionCup::freeze()
     }
 
     _frozen = true;
+    const State prev = _state;
     _phase = Phase::NONE;
 
-    if (_state == State::LOWERING || _state == State::LOWERED || _state == State::FROZEN) {
+    switch (prev) {
+    case State::LOWERING:
+        _frozen_vacuum_ready = false;
         _state = State::FROZEN;
         apply_frozen_hold();
-        log_status(true);
-        return;
-    }
+        break;
 
-    if (_state == State::RAISING) {
-        // 释放过程中遇超时/倾角：中止抬起，尽量保持吸附
+    case State::LOWERED:
+        _frozen_vacuum_ready = true;
         _state = State::FROZEN;
         apply_frozen_hold();
-        log_status(true);
-        return;
+        break;
+
+    case State::FROZEN:
+        apply_frozen_hold();
+        break;
+
+    case State::RAISING:
+        // 抬起中断：仍视为已吸附，保持密封
+        _frozen_vacuum_ready = true;
+        _state = State::FROZEN;
+        apply_frozen_hold();
+        break;
+
+    default:
+        break;
     }
 
     log_status(true);
@@ -237,6 +255,11 @@ void AP_SuctionCup::emergency_release()
         return;
     }
 
+    // 已在释放中则不重启序列
+    if (_state == State::RAISING) {
+        return;
+    }
+
     begin_raise();
 }
 
@@ -247,6 +270,7 @@ void AP_SuctionCup::clear_fault()
     }
 
     _frozen = false;
+    _frozen_vacuum_ready = false;
     _phase = Phase::NONE;
     _state = State::RAISED;
 
@@ -262,6 +286,20 @@ void AP_SuctionCup::clear_fault()
 void AP_SuctionCup::unfreeze()
 {
     _frozen = false;
+
+    if (_state != State::FROZEN) {
+        return;
+    }
+
+    _phase = Phase::NONE;
+    if (_frozen_vacuum_ready) {
+        _state = State::LOWERED;
+        apply_lowered_hold();
+    } else {
+        // LOWERING 中途冻结：未完成负压，回到抬起空闲
+        _state = State::RAISED;
+        apply_raised_idle();
+    }
 }
 
 bool AP_SuctionCup::is_busy() const
@@ -343,18 +381,23 @@ void AP_SuctionCup::apply_raised_idle()
     _phase = Phase::NONE;
 }
 
+void AP_SuctionCup::apply_lowered_hold()
+{
+    // 负压已建立：停泵省电，靠密封阀维持吸附
+    write_pump(PWM_STOP_US);
+    write_valve(_valve_pwm_seal.get());
+    write_lift(_lift_pwm_lowered.get());
+}
+
 void AP_SuctionCup::apply_frozen_hold()
 {
-    write_pump(PWM_STOP_US);
-
     if (_state == State::FROZEN || _state == State::LOWERED) {
-        // 已吸附或冻结：关泵省电，阀保持密封维持负压
-        write_valve(_valve_pwm_seal.get());
-        write_lift(_lift_pwm_lowered.get());
+        apply_lowered_hold();
         return;
     }
 
     if (_state == State::LOWERING) {
+        write_pump(PWM_STOP_US);
         write_lift(_lift_pwm_lowered.get());
         if (_phase >= Phase::LOWER_SEAL) {
             write_valve(_valve_pwm_seal.get());
@@ -417,6 +460,7 @@ void AP_SuctionCup::update_lowering(uint32_t now)
         if (now - _phase_start_ms >= uint32_t(_vacuum_delay_ms.get())) {
             _phase = Phase::NONE;
             _state = State::LOWERED;
+            apply_lowered_hold();
             log_status(true);
         }
         break;
@@ -498,7 +542,8 @@ void AP_SuctionCup::log_status(bool force)
     //                 unsigned(_last_lift_pwm), unsigned(_last_valve_pwm), unsigned(_last_pump_pwm));
 }
 
-namespace AP {
+namespace AP
+{
 
 AP_SuctionCup &suction_cup()
 {

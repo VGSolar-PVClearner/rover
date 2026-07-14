@@ -65,6 +65,12 @@ public:
     bool has_fault() const { return _state == State::FAULT; }
     State get_state() const { return _state; }
 
+    uint16_t get_last_lift_pwm_us() const { return _last_lift_pwm; }
+    uint16_t get_last_valve_pwm_us() const { return _last_valve_pwm; }
+    uint16_t get_last_pump_pwm_us() const { return _last_pump_pwm; }
+    uint8_t get_state_u8() const { return uint8_t(_state); }
+    uint8_t get_phase_u8() const { return uint8_t(_phase); }
+
 private:
     static AP_SuctionCup *_singleton;
 
@@ -98,6 +104,7 @@ private:
 
     bool _active;
     bool _frozen;
+    bool _frozen_vacuum_ready;  // freeze 时是否已完成建负压（LOWERED）
     State _state;
     Phase _phase;
     uint32_t _phase_start_ms;
@@ -116,6 +123,7 @@ private:
     void set_fault();
     void apply_safe_idle();
     void apply_raised_idle();
+    void apply_lowered_hold();
     void apply_frozen_hold();
 
     uint16_t calc_pump_pwm_us() const;
