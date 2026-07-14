@@ -174,8 +174,8 @@ void ModeVGSolar::publish_status_feedback()
         break;
     case VGSubMode::NAV:
         control_mode = (_nav_coord_mode == NAV_MODE_BODY)
-            ? uint8_t(ControlMode::NAV_BODY)
-            : uint8_t(ControlMode::NAV_GPS);
+                       ? uint8_t(ControlMode::NAV_BODY)
+                       : uint8_t(ControlMode::NAV_GPS);
         break;
     case VGSubMode::ESTOP:
         control_mode = uint8_t(ControlMode::STANDBY);
@@ -531,7 +531,7 @@ void ModeVGSolar::update_estop()
 void ModeVGSolar::start_turn(const TurnData &cmd)
 {
     _submode_before_turn = (_vg_submode == VGSubMode::TURN || _vg_submode == VGSubMode::ESTOP)
-        ? VGSubMode::STANDBY : _vg_submode;
+                           ? VGSubMode::STANDBY : _vg_submode;
 
     _vg_submode = VGSubMode::TURN;
     _turn_direction = cmd.direction;
@@ -542,8 +542,8 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
     _turn_accumulated_deg = 0.0f;
 
     gcs().send_text(MAV_SEVERITY_INFO,
-        "VG_SOLAR: TURN start dir=%d mode=%d angle=%.1f",
-        _turn_direction, _turn_mode_type, _turn_target_angle_deg);
+                    "VG_SOLAR: TURN start dir=%d mode=%d angle=%.1f",
+                    _turn_direction, _turn_mode_type, _turn_target_angle_deg);
 }
 
 void ModeVGSolar::update_turn()

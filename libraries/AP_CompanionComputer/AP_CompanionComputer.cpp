@@ -309,7 +309,7 @@ void AP_CompanionComputer::send_nav_data()
 }
 
 bool AP_CompanionComputer::write_runtime_param(uint16_t param_index, uint8_t param_type, uint32_t param_value,
-                                               ParamFeedbackData &feedback_out)
+        ParamFeedbackData &feedback_out)
 {
     // 指南滚刷参数均为 uint32
     if (param_type != PARAM_TYPE_UINT32) {
@@ -613,7 +613,8 @@ void AP_CompanionComputer::send_data()
 
 AP_CompanionComputer *AP_CompanionComputer::_singleton;
 
-namespace AP {
+namespace AP
+{
 
 AP_CompanionComputer &companioncomputer()
 {

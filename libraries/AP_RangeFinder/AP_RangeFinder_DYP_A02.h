@@ -46,7 +46,8 @@ public:
 
     static AP_RangeFinder_Backend_Serial *create(
         RangeFinder::RangeFinder_State &_state,
-        AP_RangeFinder_Params &_params) {
+        AP_RangeFinder_Params &_params)
+    {
         return new AP_RangeFinder_DYP_A02(_state, _params);
     }
 
@@ -58,19 +59,23 @@ public:
 
 protected:
 
-    MAV_DISTANCE_SENSOR _get_mav_distance_sensor_type() const override {
+    MAV_DISTANCE_SENSOR _get_mav_distance_sensor_type() const override
+    {
         return MAV_DISTANCE_SENSOR_ULTRASOUND;
     }
 
-    uint32_t initial_baudrate(uint8_t serial_instance) const override {
+    uint32_t initial_baudrate(uint8_t serial_instance) const override
+    {
         return 9600;
     }
 
-    int16_t max_distance_cm() const override {
+    int16_t max_distance_cm() const override
+    {
         return MIN(params.max_distance_cm, DYP_A02_RANGE_MAX_CM);
     }
 
-    int16_t min_distance_cm() const override {
+    int16_t min_distance_cm() const override
+    {
         return MAX(params.min_distance_cm, DYP_A02_RANGE_MIN_CM);
     }
 
