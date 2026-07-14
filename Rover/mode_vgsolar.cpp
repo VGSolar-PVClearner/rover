@@ -132,9 +132,8 @@ void ModeVGSolar::_exit()
 
 void ModeVGSolar::update()
 {
-    // 低电压：强制关刷（台架无电池时注释掉，上车后恢复）
-    uint8_t batt_pct = 0;
-    if (AP::battery().capacity_remaining_pct(batt_pct, 1) && batt_pct <= 20) {
+    // 低电压：强制关刷；无有效电量读数时不触发（台架安全）
+    if (rover.companion_computer.is_low_battery()) {
         rover.companion_computer.stop_brushes();
     }
 
