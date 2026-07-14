@@ -706,6 +706,10 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     AP_SUBGROUPPTR(mode_vgsolar_ptr, "VGS_", 58, ParametersG2, ModeVGSolar),
 #endif
 
+    // @Group: SCUP_
+    // @Path: ../libraries/AP_SuctionCup/AP_SuctionCup.cpp
+    AP_SUBGROUPINFO(suction_cup, "SCUP_", 59, ParametersG2, AP_SuctionCup),
+
     AP_GROUPEND
 };
 

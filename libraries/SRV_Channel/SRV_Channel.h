@@ -191,6 +191,9 @@ public:
         k_lift_release          = 156,
         k_vgsolar_brush_front   = 157,           ///< VGSolar front roll brush PWM
         k_vgsolar_brush_rear    = 158,           ///< VGSolar rear roll brush PWM
+        k_vgsolar_suction_lift  = 159,           ///< VGSolar suction cup lift servo
+        k_vgsolar_air_valve     = 160,           ///< VGSolar suction air valve
+        k_vgsolar_air_pump      = 161,           ///< VGSolar suction vacuum pump
         k_nr_aux_servo_functions         ///< This must be the last enum value (only add new values _before_ this one)
     } Aux_servo_function_t;
 

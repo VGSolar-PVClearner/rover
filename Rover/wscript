@@ -25,6 +25,7 @@ def build(bld):
             'AP_IRLock',
             'AP_CompanionComputer',
             'AP_Brush',
+            'AP_SuctionCup',
         ],
     )
 
