@@ -33,6 +33,7 @@ AP_CompanionComputer::AP_CompanionComputer() :
     _rx_count(0),
     _uart(nullptr),
     _last_sent_ms(0),
+    _last_ncu_frame_ms(0),
     _tx_drop_event(0),
     _tx_drop_periodic(0),
     _new_cmd_flags(0),
@@ -153,6 +154,8 @@ void AP_CompanionComputer::process_received_data(uint8_t oneByte)
         // 整帧长度 = DATA_LENGTH + 7（含帧头、校验和、结束符 0xFF）
         if (_rx_count >= (_data_len + 7)) {
             if (validate_packet()) {
+                // 任意合法 NCU 帧均刷新心跳时间（含参数写/读）
+                _last_ncu_frame_ms = now;
                 switch (_cmd_type) {
                 case NCU_CMD_SPEED_CTRL:
                     parse_speed_ctrl();

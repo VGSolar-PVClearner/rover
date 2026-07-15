@@ -1296,7 +1296,6 @@ private:
     uint16_t _arrival_yaw_raw_cd;  // 协议原始值；Body 模式下为相对车头的偏移
     float _arrival_yaw_target_cd;  // 进入 YAW_ALIGN 阶段后换算得到的绝对目标航向
 
-    uint32_t _last_ncu_cmd_ms;
     uint32_t _turn_phase_start_ms;
     bool _turn_frozen;  // 安全事件后暂停转弯阶段推进
 

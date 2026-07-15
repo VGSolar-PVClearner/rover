@@ -10,8 +10,10 @@
  *
  * 职责边界：
  *   本库：帧收发、解析、ACK/参数反馈、状态帧填充、滚刷运行参数缓存。
- *   ModeVGSolar：运动控制、子模式状态机、心跳超时、吸盘/导航/转弯执行。
+ *   ModeVGSolar：运动控制、子模式状态机、心跳超时（看 last_ncu_frame_ms）、吸盘/导航/转弯执行。
  *
+ * NCU 心跳：任意校验通过的下行帧都会刷新 last_ncu_frame_ms（含 0x03/0x04 参数）；
+ *           进入 VGSL 时 reset_ncu_rx_heartbeat()，Mode 用该时间戳判 200ms 超时 bit7。
  * 调度（Rover.cpp）：
  *   50Hz  receive_companion_computer() → update()        收 NCU 帧
  *   10Hz  send2_companion_computer()   → publish_*()     Mode 写入模式侧字段
@@ -116,6 +118,11 @@ public:
     // 主电池(instance 0)电量有效且 ≤ LOW_BATT_PCT_THRESHOLD；无有效读数时返回 false
     bool is_low_battery() const;
 
+    // 最近一次合法 NCU 帧时间戳（ms）；0 表示尚未收到（或已被 reset）
+    uint32_t last_ncu_frame_ms() const { return _last_ncu_frame_ms; }
+    // 进入 VGSL 时清零，避免沿用模式外收包时间导致立刻判超时
+    void reset_ncu_rx_heartbeat() { _last_ncu_frame_ms = 0; }
+
     static const struct AP_Param::GroupInfo var_info[];
 
 private:
@@ -146,6 +153,7 @@ private:
     uint8_t _rx_count;
     uint32_t _rx_start_time;
     uint32_t _last_sent_ms;  // send_data 10Hz 限速
+    uint32_t _last_ncu_frame_ms;  // 任意合法 NCU 帧刷新；供 ModeVGSolar 心跳超时
     uint16_t _tx_drop_event;
     uint16_t _tx_drop_periodic;
 

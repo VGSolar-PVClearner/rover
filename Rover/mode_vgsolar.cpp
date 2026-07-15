@@ -22,7 +22,7 @@
  *   10Hz  publish_*() + send_data()       状态/导航反馈上行
  *
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
- * 安全：倾角>30° 或 NCU 200ms 无帧 → freeze 吸盘 + safety_hold；条件恢复后 raise
+ * 安全：倾角>30° 或 NCU 200ms 无合法帧（含参数）→ freeze 吸盘 + safety_hold；恢复后 raise
  *
  */
 
@@ -100,7 +100,6 @@ ModeVGSolar::ModeVGSolar(void) :
     _arrival_yaw_required(false),
     _arrival_yaw_raw_cd(0),
     _arrival_yaw_target_cd(0.0f),
-    _last_ncu_cmd_ms(0),
     _turn_phase_start_ms(0),
     _turn_frozen(false),
     _safety_hold_mask(0),
@@ -125,7 +124,6 @@ bool ModeVGSolar::_enter()
     _vg_submode = VGSubMode::STANDBY;
     _turn_phase = TurnPhase::IDLE;
     _target_speed_ms = 0.0f;
-    _last_ncu_cmd_ms = 0;
     _fault_flags = 0;
     clear_safety_hold_mask();
     _nav_phase = NavPhase::CRUISE;
@@ -133,6 +131,7 @@ bool ModeVGSolar::_enter()
     capture_ned_origin();
 
     // 外设激活：滚刷/吸盘仅在 VGSL 内输出 PWM
+    rover.companion_computer.reset_ncu_rx_heartbeat();
     rover.companion_computer.stop_brushes();
     AP::brush().set_active(true);
     AP::suction_cup().clear_fault();
@@ -301,7 +300,7 @@ void ModeVGSolar::publish_nav_status_feedback()
     rover.companion_computer.set_nav_status(data, send_nav);
 }
 
-// NCU 指令消费（从 AP_CompanionComputer 缓存读取，置 _last_ncu_cmd_ms 刷新心跳）
+// NCU 指令消费（心跳由 CompanionComputer 在任意合法帧上刷新 last_ncu_frame_ms）
 // 优先级：系统控制 > 转弯 > 导航 > 速度控制
 void ModeVGSolar::read_companion_commands()
 {
@@ -310,7 +309,6 @@ void ModeVGSolar::read_companion_commands()
     if (cc.is_new_system_ctrl()) {
         cc.clear_new_system_flag();
         const SystemCtrlData &cmd = cc.get_latest_system_ctrl();
-        _last_ncu_cmd_ms = AP_HAL::millis();
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
 
         switch (cmd.command) {
@@ -353,7 +351,6 @@ void ModeVGSolar::read_companion_commands()
     if (cc.is_new_turn()) {
         cc.clear_new_turn_flag();
         const TurnData &cmd = cc.get_latest_turn();
-        _last_ncu_cmd_ms = AP_HAL::millis();
         start_turn(cmd);
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
         return;
@@ -362,7 +359,6 @@ void ModeVGSolar::read_companion_commands()
     if (cc.is_new_position()) {
         cc.clear_new_position_flag();
         const PositionData &cmd = cc.get_latest_position();
-        _last_ncu_cmd_ms = AP_HAL::millis();
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
 
         if (cmd.nav_mode == NAV_MODE_CANCEL) {
@@ -471,7 +467,6 @@ void ModeVGSolar::read_companion_commands()
     if (cc.is_new_speed_ctrl()) {
         cc.clear_new_speed_flag();
         const SpeedCtrlData &cmd = cc.get_latest_speed_ctrl();
-        _last_ncu_cmd_ms = AP_HAL::millis();
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
 
         if (_vg_submode == VGSubMode::NAV) {
@@ -966,7 +961,6 @@ void ModeVGSolar::update_turn()
     send_turn_pwm_gcs();
 }
 
-// 导航取消与 NCU 心跳超时（200ms，参数帧不刷新 _last_ncu_cmd_ms）
 void ModeVGSolar::cancel_navigation()
 {
     stop_vehicle();
@@ -977,9 +971,12 @@ void ModeVGSolar::cancel_navigation()
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: NAV cancelled");
 }
 
+// NCU 心跳超时 200ms：以 companion.last_ncu_frame_ms 为准（任意合法帧，含参数写/读）
 void ModeVGSolar::check_ncu_timeout()
 {
-    if (_last_ncu_cmd_ms == 0) {
+    const uint32_t last_ncu_ms = rover.companion_computer.last_ncu_frame_ms();
+    if (last_ncu_ms == 0) {
+        // 进入 VGSL 后尚未收到任何合法帧：不判超时
         return;
     }
 
@@ -989,8 +986,10 @@ void ModeVGSolar::check_ncu_timeout()
         return;
     }
 
-    const bool ncu_timed_out = AP_HAL::millis() - _last_ncu_cmd_ms > NCU_HEARTBEAT_TIMEOUT_MS;
-    if (!ncu_timed_out) {
+    const uint32_t now = AP_HAL::millis();
+    if (now - last_ncu_ms <= NCU_HEARTBEAT_TIMEOUT_MS) {
+        // 任意帧（含参数）恢复通讯后清除 bit7，便于 try_recover_safety_hold
+        _fault_flags &= ~FAULT_COMM_TIMEOUT;
         return;
     }
 
