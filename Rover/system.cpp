@@ -32,6 +32,10 @@ void Rover::init_ardupilot()
 
     companion_computer.init();  // CC_ENABLE=1 时打开 SerialProtocol_2CC 串口
 
+#if AP_2BLD6010_ENABLED
+    g2.brushless_esc.init();
+#endif
+
 #if OSD_ENABLED
     osd.init();
 #endif

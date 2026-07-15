@@ -710,6 +710,12 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @Path: ../libraries/AP_SuctionCup/AP_SuctionCup.cpp
     AP_SUBGROUPINFO(suction_cup, "SCUP_", 59, ParametersG2, AP_SuctionCup),
 
+#if AP_2BLD6010_ENABLED
+    // @Group: BESC_
+    // @Path: ../libraries/AP_2BLD6010/AP_2BLD6010.cpp
+    AP_SUBGROUPINFO(brushless_esc, "BESC_", 60, ParametersG2, AP_2BLD6010),
+#endif
+
     AP_GROUPEND
 };
 
