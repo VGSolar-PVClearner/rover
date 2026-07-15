@@ -16,6 +16,10 @@
 #include <AP_WindVane/AP_WindVane.h>
 #include <AP_SuctionCup/AP_SuctionCup.h>
 #include <AP_SuctionPressure/AP_SuctionPressure.h>
+#include <AP_2BLD6010/AP_2BLD6010_config.h>
+#if AP_2BLD6010_ENABLED
+#include <AP_2BLD6010/AP_2BLD6010.h>
+#endif
 
 #define AP_PARAM_VEHICLE_NAME rover
 
@@ -447,6 +451,10 @@ public:
 
     AP_SuctionCup suction_cup;
     AP_SuctionPressure suction_pressure;
+
+#if AP_2BLD6010_ENABLED
+    AP_2BLD6010 brushless_esc;
+#endif
 };
 
 extern const AP_Param::Info var_info[];

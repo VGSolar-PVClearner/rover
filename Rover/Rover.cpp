@@ -143,6 +143,9 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     // NCU 伴机串口：收 50Hz / 发 10Hz
     SCHED_TASK(receive_companion_computer,  50,    200,  172),
     SCHED_TASK(send2_companion_computer,    10,     50,  173),
+#if AP_2BLD6010_ENABLED
+    SCHED_TASK_CLASS(AP_2BLD6010, &rover.g2.brushless_esc, update, 100, 150, 174),
+#endif
 };
 
 
