@@ -26,7 +26,7 @@ def build(bld):
             'AP_CompanionComputer',
             'AP_Brush',
             'AP_SuctionCup',
-            'AP_2BLD6010',
+            'AP_ESC_2BLD6010',
         ],
     )
 
