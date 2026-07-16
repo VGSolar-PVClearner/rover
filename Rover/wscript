@@ -67,7 +67,7 @@ def build(bld):
             'AP_Brush',
             'AP_SuctionCup',
             'AP_SuctionPressure',
-            'AP_2BLD6010',
+            'AP_ESC_2BLD6010',
         ],
     )
 
