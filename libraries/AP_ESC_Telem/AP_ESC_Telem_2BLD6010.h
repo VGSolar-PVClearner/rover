@@ -1,19 +1,19 @@
 #pragma once
 
-#include "AP_ESC_2BLD6010_config.h"
+#include "AP_ESC_Telem_config.h"
 
-#if AP_ESC_2BLD6010_ENABLED
+#if AP_ESC_TELEM_2BLD6010_ENABLED
 
 #include <AP_Common/AP_Common.h>
 #include <AP_ESC_Telem/AP_ESC_Telem_Backend.h>
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Param/AP_Param.h>
 
-class AP_ESC_2BLD6010 : public AP_ESC_Telem_Backend {
+class AP_ESC_Telem_2BLD6010 : public AP_ESC_Telem_Backend {
 public:
     static constexpr uint8_t MAX_ESC_COUNT = 4;
 
-    struct Data {
+    struct DiagnosticData {
         uint16_t fault_code;
         float current_a;
         float rpm;
@@ -72,7 +72,7 @@ public:
     class ResponseStream {
     public:
         bool append(const uint8_t *bytes, uint8_t length);
-        ParseResult next(uint8_t expected_address, Data &data);
+        ParseResult next(uint8_t expected_address, DiagnosticData &data);
         void reset();
         uint8_t buffered_length() const { return _length; }
 
@@ -83,7 +83,7 @@ public:
         uint8_t _length {};
     };
 
-    AP_ESC_2BLD6010();
+    AP_ESC_Telem_2BLD6010();
 
     static const struct AP_Param::GroupInfo var_info[];
 
@@ -95,10 +95,10 @@ public:
     ConfigError config_error() const;
     bool healthy(uint8_t instance) const;
     bool has_fault(uint8_t instance) const;
-    bool get_data(uint8_t instance, Data &out) const;
+    bool get_diagnostics(uint8_t instance, DiagnosticData &out) const;
 
     static void build_request(uint8_t address, uint8_t request[8]);
-    static ParseResult parse_response(const uint8_t *frame, uint8_t frame_len, uint8_t expected_address, Data &data);
+    static ParseResult parse_response(const uint8_t *frame, uint8_t frame_len, uint8_t expected_address, DiagnosticData &data);
     static bool time_reached(uint32_t now_ms, uint32_t deadline_ms);
     static bool data_is_healthy(uint32_t now_ms, uint32_t last_update_ms, uint32_t timeout_ms, bool has_valid_data);
     static bool health_transition_due(bool healthy_state, bool &logged_valid, bool &last_logged_healthy);
@@ -128,7 +128,7 @@ private:
 
     struct InstanceState {
         uint8_t address;
-        Data data;
+        DiagnosticData data;
         uint32_t last_request_ms;
         uint32_t health_check_start_ms;
         bool has_valid_data;

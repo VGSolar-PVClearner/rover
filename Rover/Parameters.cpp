@@ -714,10 +714,10 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @Path: ../libraries/AP_SuctionPressure/AP_SuctionPressure.cpp
     AP_SUBGROUPINFO(suction_pressure, "SPRESS_", 60, ParametersG2, AP_SuctionPressure),
 
-#if AP_ESC_2BLD6010_ENABLED
+#if AP_ESC_TELEM_2BLD6010_ENABLED
     // @Group: BESC_
-    // @Path: ../libraries/AP_ESC_2BLD6010/AP_ESC_2BLD6010.cpp
-    AP_SUBGROUPINFO(esc_2bld6010, "BESC_", 61, ParametersG2, AP_ESC_2BLD6010),
+    // @Path: ../libraries/AP_ESC_Telem/AP_ESC_Telem_2BLD6010.cpp
+    AP_SUBGROUPINFO(esc_telem_2bld6010, "BESC_", 61, ParametersG2, AP_ESC_Telem_2BLD6010),
 #endif
 
     AP_GROUPEND

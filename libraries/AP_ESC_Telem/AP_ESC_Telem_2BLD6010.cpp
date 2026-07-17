@@ -1,6 +1,6 @@
-#include "AP_ESC_2BLD6010.h"
+#include "AP_ESC_Telem_2BLD6010.h"
 
-#if AP_ESC_2BLD6010_ENABLED
+#if AP_ESC_TELEM_2BLD6010_ENABLED
 
 #include <AP_ESC_Telem/AP_ESC_Telem.h>
 #include <AP_Logger/AP_Logger.h>
@@ -8,20 +8,20 @@
 #include <GCS_MAVLink/GCS.h>
 
 /*
- * AP_ESC_2BLD6010 实现：在同一条 RS-485/Modbus RTU 总线上轮询最多四台电调。
+ * AP_ESC_Telem_2BLD6010 实现：在同一条 RS-485/Modbus RTU 总线上轮询最多四台电调。
  * 配置参数先整体校验，再一次性写入运行状态；任一启用参数非法时驱动不会部分启动。
  * 每台电调使用固定的 AP_ESC_Telem 槽位，并独立维护遥测、健康状态和通信统计。
  */
 
 // BESC_* 参数表。以下 @Param 元数据保持 ArduPilot 标准英文格式，便于参数文档工具解析。
-const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
+const AP_Param::GroupInfo AP_ESC_Telem_2BLD6010::var_info[] = {
     // @Param: ENABLE
     // @DisplayName: 2BLD6010 telemetry enable
     // @Description: Enable read-only Modbus telemetry from 2BLD6010 motor controllers. Only 0 and 1 are valid. Reboot required after changing.
     // @Values: 0:Disabled,1:Enabled
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO_FLAGS("ENABLE", 1, AP_ESC_2BLD6010, _enable, 0, AP_PARAM_FLAG_ENABLE),
+    AP_GROUPINFO_FLAGS("ENABLE", 1, AP_ESC_Telem_2BLD6010, _enable, 0, AP_PARAM_FLAG_ENABLE),
 
     // @Param: NUM
     // @DisplayName: Number of 2BLD6010 controllers
@@ -30,7 +30,7 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 1
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO("NUM", 2, AP_ESC_2BLD6010, _num_escs, 1),
+    AP_GROUPINFO("NUM", 2, AP_ESC_Telem_2BLD6010, _num_escs, 1),
 
     // @Param: ADDR1
     // @DisplayName: First 2BLD6010 Modbus address
@@ -39,7 +39,7 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 1
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO("ADDR1", 3, AP_ESC_2BLD6010, _address_params[0], 2),
+    AP_GROUPINFO("ADDR1", 3, AP_ESC_Telem_2BLD6010, _address_params[0], 2),
 
     // @Param: ADDR2
     // @DisplayName: Second 2BLD6010 Modbus address
@@ -48,7 +48,7 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 1
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO("ADDR2", 4, AP_ESC_2BLD6010, _address_params[1], 1),
+    AP_GROUPINFO("ADDR2", 4, AP_ESC_Telem_2BLD6010, _address_params[1], 1),
 
     // @Param: OFS
     // @DisplayName: ESC telemetry index offset
@@ -57,7 +57,7 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 1
     // @RebootRequired: True
     // @User: Advanced
-    AP_GROUPINFO("OFS", 5, AP_ESC_2BLD6010, _esc_offset, 0),
+    AP_GROUPINFO("OFS", 5, AP_ESC_Telem_2BLD6010, _esc_offset, 0),
 
     // @Param: RATE
     // @DisplayName: 2BLD6010 polling rate
@@ -67,7 +67,7 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 1
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO("RATE", 6, AP_ESC_2BLD6010, _rate_hz, 10),
+    AP_GROUPINFO("RATE", 6, AP_ESC_Telem_2BLD6010, _rate_hz, 10),
 
     // @Param: TIMEOUT
     // @DisplayName: 2BLD6010 health timeout
@@ -77,7 +77,7 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 10
     // @RebootRequired: True
     // @User: Advanced
-    AP_GROUPINFO("TIMEOUT", 7, AP_ESC_2BLD6010, _timeout_ms, 500),
+    AP_GROUPINFO("TIMEOUT", 7, AP_ESC_Telem_2BLD6010, _timeout_ms, 500),
 
     // @Param: ADDR3
     // @DisplayName: Third 2BLD6010 Modbus address
@@ -86,7 +86,7 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 1
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO("ADDR3", 8, AP_ESC_2BLD6010, _address_params[2], 3),
+    AP_GROUPINFO("ADDR3", 8, AP_ESC_Telem_2BLD6010, _address_params[2], 3),
 
     // @Param: ADDR4
     // @DisplayName: Fourth 2BLD6010 Modbus address
@@ -95,13 +95,13 @@ const AP_Param::GroupInfo AP_ESC_2BLD6010::var_info[] = {
     // @Increment: 1
     // @RebootRequired: True
     // @User: Standard
-    AP_GROUPINFO("ADDR4", 9, AP_ESC_2BLD6010, _address_params[3], 4),
+    AP_GROUPINFO("ADDR4", 9, AP_ESC_Telem_2BLD6010, _address_params[3], 4),
 
     AP_GROUPEND
 };
 
 // 构造驱动对象并加载 BESC_* 参数默认值，实际串口初始化由 init() 完成。
-AP_ESC_2BLD6010::AP_ESC_2BLD6010() :
+AP_ESC_Telem_2BLD6010::AP_ESC_Telem_2BLD6010() :
     _uart(nullptr),
     _configured_count(0),
     _validated_esc_offset(0),
@@ -119,25 +119,25 @@ AP_ESC_2BLD6010::AP_ESC_2BLD6010() :
 }
 
 // 返回 BESC_ENABLE 是否为合法启用值 1。
-bool AP_ESC_2BLD6010::enabled() const
+bool AP_ESC_Telem_2BLD6010::enabled() const
 {
     return _enable.get() == 1;
 }
 
 // 返回通过完整配置验证并已写入运行态的电调数量。
-uint8_t AP_ESC_2BLD6010::configured_count() const
+uint8_t AP_ESC_Telem_2BLD6010::configured_count() const
 {
     return _configured_count;
 }
 
 // 返回最近一次 init() 保存的配置校验结果，供诊断接口读取。
-AP_ESC_2BLD6010::ConfigError AP_ESC_2BLD6010::config_error() const
+AP_ESC_Telem_2BLD6010::ConfigError AP_ESC_Telem_2BLD6010::config_error() const
 {
     return _config_error;
 }
 
 // 停止当前轮询并清空所有实例运行状态，为禁用、失败或重复初始化建立安全起点。
-void AP_ESC_2BLD6010::reset_runtime_state()
+void AP_ESC_Telem_2BLD6010::reset_runtime_state()
 {
     // init() 允许重复调用：先停止上一轮轮询并清除全部运行态，但不修改 AP_Param 参数值。
     if (_uart != nullptr) {
@@ -161,7 +161,7 @@ void AP_ESC_2BLD6010::reset_runtime_state()
 }
 
 // 将 AP_Param 原始值复制到宽类型配置结构，供统一范围和重复性校验。
-AP_ESC_2BLD6010::RawConfig AP_ESC_2BLD6010::get_raw_config() const
+AP_ESC_Telem_2BLD6010::RawConfig AP_ESC_Telem_2BLD6010::get_raw_config() const
 {
     // 先提升为 int32_t，再执行范围校验，避免负数提前转换成无符号值或窄整数溢出。
     RawConfig raw {};
@@ -177,7 +177,7 @@ AP_ESC_2BLD6010::RawConfig AP_ESC_2BLD6010::get_raw_config() const
 }
 
 // 将已验证配置一次性应用到四实例运行数组，不接受部分有效配置。
-void AP_ESC_2BLD6010::apply_config(const ValidatedConfig &config)
+void AP_ESC_Telem_2BLD6010::apply_config(const ValidatedConfig &config)
 {
     // 只有 validate_config() 全部通过后才调用；一次性清空并提交四个实例的运行配置。
     for (InstanceState &instance : _instances) {
@@ -194,7 +194,7 @@ void AP_ESC_2BLD6010::apply_config(const ValidatedConfig &config)
 }
 
 // 在初始化阶段向地面站发送一次配置错误编号，避免高频路径重复提示。
-void AP_ESC_2BLD6010::report_config_error() const
+void AP_ESC_Telem_2BLD6010::report_config_error() const
 {
     if (_config_error == ConfigError::NONE) {
         return;
@@ -203,7 +203,7 @@ void AP_ESC_2BLD6010::report_config_error() const
 }
 
 // 验证全部 BESC_* 参数、应用实例配置，并在最后启动 protocol=51 的串口。
-void AP_ESC_2BLD6010::init()
+void AP_ESC_Telem_2BLD6010::init()
 {
     // 初始化顺序固定为：安全停止 -> 完整验证 -> 原子应用 -> 最后启动 UART。
     reset_runtime_state();
@@ -244,7 +244,7 @@ void AP_ESC_2BLD6010::init()
 }
 
 // 根据指定实例最后一帧合法遥测的时间判断当前通信健康状态。
-bool AP_ESC_2BLD6010::healthy(uint8_t instance) const
+bool AP_ESC_Telem_2BLD6010::healthy(uint8_t instance) const
 {
     if (!enabled() || _config_error != ConfigError::NONE || _uart == nullptr || instance >= _configured_count) {
         return false;
@@ -255,13 +255,13 @@ bool AP_ESC_2BLD6010::healthy(uint8_t instance) const
 }
 
 // 在实例通信健康时判断设备原始故障码是否非零。
-bool AP_ESC_2BLD6010::has_fault(uint8_t instance) const
+bool AP_ESC_Telem_2BLD6010::has_fault(uint8_t instance) const
 {
     return healthy(instance) && _instances[instance].data.fault_code != 0;
 }
 
 // 复制指定实例最近一次合法遥测；尚无有效数据或索引越界时返回 false。
-bool AP_ESC_2BLD6010::get_data(uint8_t instance, Data &out) const
+bool AP_ESC_Telem_2BLD6010::get_diagnostics(uint8_t instance, DiagnosticData &out) const
 {
     if (instance >= _configured_count || !_instances[instance].has_valid_data) {
         return false;
@@ -271,7 +271,7 @@ bool AP_ESC_2BLD6010::get_data(uint8_t instance, Data &out) const
 }
 
 // 由 Rover 100Hz 调度器调用，推进非阻塞发送、接收、超时和健康检查状态机。
-void AP_ESC_2BLD6010::update()
+void AP_ESC_Telem_2BLD6010::update()
 {
     if (!enabled() || _config_error != ConfigError::NONE || _uart == nullptr || _configured_count == 0) {
         return;
@@ -300,7 +300,7 @@ void AP_ESC_2BLD6010::update()
 }
 
 // 向当前 round-robin 实例发送一次只读 Modbus 请求并建立 outstanding request。
-void AP_ESC_2BLD6010::send_request(uint32_t now_ms)
+void AP_ESC_Telem_2BLD6010::send_request(uint32_t now_ms)
 {
     if (_current_instance >= _configured_count) {
         _current_instance = 0;
@@ -335,7 +335,7 @@ void AP_ESC_2BLD6010::send_request(uint32_t now_ms)
 }
 
 // 非阻塞读取 UART 可用字节，将数据追加到流式缓存并尝试解析完整响应。
-void AP_ESC_2BLD6010::read_response(uint32_t now_ms)
+void AP_ESC_Telem_2BLD6010::read_response(uint32_t now_ms)
 {
     uint8_t bytes[RX_BUFFER_SIZE];
     uint8_t length = 0;
@@ -356,7 +356,7 @@ void AP_ESC_2BLD6010::read_response(uint32_t now_ms)
 }
 
 // 处理当前实例的缓存帧，按解析结果更新统计并决定继续等待或切换实例。
-bool AP_ESC_2BLD6010::process_rx_buffer(uint32_t now_ms)
+bool AP_ESC_Telem_2BLD6010::process_rx_buffer(uint32_t now_ms)
 {
     InstanceState &instance = _instances[_current_instance];
     // 一次只处理当前 outstanding request；所有计数均归属当前实例。
@@ -392,13 +392,13 @@ bool AP_ESC_2BLD6010::process_rx_buffer(uint32_t now_ms)
 }
 
 // 提交合法响应，刷新实例成功状态并发布标准 AP_ESC_Telem 遥测。
-void AP_ESC_2BLD6010::handle_valid_response(uint8_t instance_index, uint32_t now_ms)
+void AP_ESC_Telem_2BLD6010::handle_valid_response(uint8_t instance_index, uint32_t now_ms)
 {
     if (instance_index >= _configured_count) {
         return;
     }
     InstanceState &instance = _instances[instance_index];
-    Data &data = instance.data;
+    DiagnosticData &data = instance.data;
     data.last_update_ms = now_ms;
     data.success_count++;
     instance.has_valid_data = true;
@@ -419,7 +419,7 @@ void AP_ESC_2BLD6010::handle_valid_response(uint8_t instance_index, uint32_t now
 }
 
 // 结束当前 outstanding request，并按固定参数槽位切换到下一实例。
-void AP_ESC_2BLD6010::advance_instance()
+void AP_ESC_Telem_2BLD6010::advance_instance()
 {
     // 所有成功和失败出口都通过这里集中执行 round-robin，防止不同分支切换行为不一致。
     _current_instance = next_instance(_current_instance, _configured_count);
@@ -430,7 +430,7 @@ void AP_ESC_2BLD6010::advance_instance()
 }
 
 // 检查单个实例的健康状态变化，并在首次状态或状态翻转时记录日志。
-void AP_ESC_2BLD6010::update_health_log(uint8_t instance_index, uint32_t now_ms)
+void AP_ESC_Telem_2BLD6010::update_health_log(uint8_t instance_index, uint32_t now_ms)
 {
     if (instance_index >= _configured_count) {
         return;
@@ -448,7 +448,7 @@ void AP_ESC_2BLD6010::update_health_log(uint8_t instance_index, uint32_t now_ms)
 }
 
 // 写入低频 BESC 通信日志，记录地址、健康状态、设备状态和各类计数。
-void AP_ESC_2BLD6010::write_log(uint8_t instance_index, uint32_t now_ms, bool healthy_state, bool force)
+void AP_ESC_Telem_2BLD6010::write_log(uint8_t instance_index, uint32_t now_ms, bool healthy_state, bool force)
 {
 #if HAL_LOGGING_ENABLED
     if (instance_index >= _configured_count) {
@@ -460,7 +460,7 @@ void AP_ESC_2BLD6010::write_log(uint8_t instance_index, uint32_t now_ms, bool he
         return;
     }
     instance.last_log_ms = now_ms;
-    const Data &data = instance.data;
+    const DiagnosticData &data = instance.data;
     AP::logger().WriteStreaming("BESC", "TimeUS,Inst,Addr,Healthy,Dir,Fault,Hall,Success,CRCErr,Timeout,BadResp,Except",
                                 "QBBBBHIIIIII",
                                 AP_HAL::micros64(),

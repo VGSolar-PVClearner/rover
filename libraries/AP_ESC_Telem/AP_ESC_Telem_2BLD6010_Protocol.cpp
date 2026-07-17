@@ -1,6 +1,6 @@
-#include "AP_ESC_2BLD6010.h"
+#include "AP_ESC_Telem_2BLD6010.h"
 
-#if AP_ESC_2BLD6010_ENABLED
+#if AP_ESC_TELEM_2BLD6010_ENABLED
 
 #include <AP_Math/crc.h>
 
@@ -122,7 +122,7 @@ uint16_t get_crc_le(const uint8_t *frame, uint8_t low_index, uint8_t high_index)
  * | 0x0027  | 霍尔低字   | U16  | 霍尔计数位 15..0                       |
  */
 // 构造读取 0x0020～0x0027 八个遥测寄存器的 8 字节 Modbus RTU 请求。
-void AP_ESC_2BLD6010::build_request(uint8_t address, uint8_t request[REQUEST_LENGTH])
+void AP_ESC_Telem_2BLD6010::build_request(uint8_t address, uint8_t request[REQUEST_LENGTH])
 {
     // 查询固定的 0x0020～0x0027 寄存器；本驱动不会构造任何 Modbus 写请求。
     request[ADDRESS_INDEX] = address;
@@ -136,10 +136,10 @@ void AP_ESC_2BLD6010::build_request(uint8_t address, uint8_t request[REQUEST_LEN
     request[REQUEST_CRC_HIGH_INDEX] = uint8_t(crc >> 8);
 }
 
-// 校验并解析单个正常或异常响应帧，只有完整合法帧才更新 Data。
-AP_ESC_2BLD6010::ParseResult AP_ESC_2BLD6010::parse_response(const uint8_t *frame, uint8_t frame_len, uint8_t expected_address, Data &data)
+// 校验并解析单个正常或异常响应帧，只有完整合法帧才更新 DiagnosticData。
+AP_ESC_Telem_2BLD6010::ParseResult AP_ESC_Telem_2BLD6010::parse_response(const uint8_t *frame, uint8_t frame_len, uint8_t expected_address, DiagnosticData &data)
 {
-    // 校验顺序由帧头到数据区逐步推进，任何失败都不会修改调用方原有 Data。
+    // 校验顺序由帧头到数据区逐步推进，任何失败都不会修改调用方原有 DiagnosticData。
     if (frame == nullptr || frame_len == 0) {
         return ParseResult::INCOMPLETE;
     }
@@ -199,7 +199,7 @@ AP_ESC_2BLD6010::ParseResult AP_ESC_2BLD6010::parse_response(const uint8_t *fram
     }
 
     // 使用临时副本集中提交解析结果，保证范围校验失败时不会留下半更新数据。
-    Data parsed = data;
+    DiagnosticData parsed = data;
     parsed.fault_code = registers[REGISTER_FAULT];
     parsed.current_a = registers[REGISTER_CURRENT] * CURRENT_SCALE_A;
     parsed.rpm = registers[REGISTER_RPM];
@@ -212,20 +212,20 @@ AP_ESC_2BLD6010::ParseResult AP_ESC_2BLD6010::parse_response(const uint8_t *fram
 }
 
 // 判断毫秒时间是否到达期限，并正确处理 32 位计数器回绕。
-bool AP_ESC_2BLD6010::time_reached(uint32_t now_ms, uint32_t deadline_ms)
+bool AP_ESC_Telem_2BLD6010::time_reached(uint32_t now_ms, uint32_t deadline_ms)
 {
     // 有符号差值比较可正确处理 millis() 的 32 位回绕。
     return int32_t(now_ms - deadline_ms) >= 0;
 }
 
 // 根据是否收到过合法数据及最后更新时间判断实例是否仍在健康超时范围内。
-bool AP_ESC_2BLD6010::data_is_healthy(uint32_t now_ms, uint32_t last_update_ms, uint32_t timeout_ms, bool has_valid_data)
+bool AP_ESC_Telem_2BLD6010::data_is_healthy(uint32_t now_ms, uint32_t last_update_ms, uint32_t timeout_ms, bool has_valid_data)
 {
     return has_valid_data && now_ms - last_update_ms <= timeout_ms;
 }
 
 // 判断健康状态是否需要首次记录或变化记录，并同步日志去重状态。
-bool AP_ESC_2BLD6010::health_transition_due(bool healthy_state, bool &logged_valid, bool &last_logged_healthy)
+bool AP_ESC_Telem_2BLD6010::health_transition_due(bool healthy_state, bool &logged_valid, bool &last_logged_healthy)
 {
     // 仅首次状态和健康状态变化需要输出日志，避免周期性重复记录。
     if (logged_valid && last_logged_healthy == healthy_state) {
@@ -237,7 +237,7 @@ bool AP_ESC_2BLD6010::health_transition_due(bool healthy_state, bool &logged_val
 }
 
 // 计算固定 round-robin 顺序中的下一实例下标。
-uint8_t AP_ESC_2BLD6010::next_instance(uint8_t current_instance, uint8_t configured_count)
+uint8_t AP_ESC_Telem_2BLD6010::next_instance(uint8_t current_instance, uint8_t configured_count)
 {
     // 参数槽位顺序即轮询顺序，地址数值大小不会影响实例编号。
     if (configured_count == 0) {
@@ -247,13 +247,13 @@ uint8_t AP_ESC_2BLD6010::next_instance(uint8_t current_instance, uint8_t configu
 }
 
 // 判断地址是否属于 Modbus 单播从站范围 1～247。
-bool AP_ESC_2BLD6010::valid_modbus_address(int16_t address)
+bool AP_ESC_Telem_2BLD6010::valid_modbus_address(int16_t address)
 {
     return address >= MODBUS_MIN_SLAVE_ADDRESS && address <= MODBUS_MAX_SLAVE_ADDRESS;
 }
 
 // 严格校验全部启用参数，并在全部通过后生成可原子应用的运行配置。
-AP_ESC_2BLD6010::ConfigError AP_ESC_2BLD6010::validate_config(const RawConfig &raw, uint8_t max_esc_instances, ValidatedConfig &validated)
+AP_ESC_Telem_2BLD6010::ConfigError AP_ESC_Telem_2BLD6010::validate_config(const RawConfig &raw, uint8_t max_esc_instances, ValidatedConfig &validated)
 {
     // 每次先清空输出，验证失败时调用方不会获得上一轮残留的部分配置。
     validated = {};
@@ -310,7 +310,7 @@ AP_ESC_2BLD6010::ConfigError AP_ESC_2BLD6010::validate_config(const RawConfig &r
 }
 
 // 根据每台期望频率和实例数计算向上取整且不小于 10ms 的总线请求间隔。
-uint16_t AP_ESC_2BLD6010::polling_interval_ms(uint8_t rate_hz, uint8_t configured_count)
+uint16_t AP_ESC_Telem_2BLD6010::polling_interval_ms(uint8_t rate_hz, uint8_t configured_count)
 {
     if (rate_hz == 0 || configured_count == 0) {
         return 0;
@@ -322,7 +322,7 @@ uint16_t AP_ESC_2BLD6010::polling_interval_ms(uint8_t rate_hz, uint8_t configure
 }
 
 // 将新接收字节追加到固定缓存，空指针或容量不足时拒绝写入。
-bool AP_ESC_2BLD6010::ResponseStream::append(const uint8_t *bytes, uint8_t length)
+bool AP_ESC_Telem_2BLD6010::ResponseStream::append(const uint8_t *bytes, uint8_t length)
 {
     // 固定缓存不动态分配；空间不足时拒绝追加，由上层结束当前请求并计错。
     if (bytes == nullptr || length > sizeof(_buffer) - _length) {
@@ -334,7 +334,7 @@ bool AP_ESC_2BLD6010::ResponseStream::append(const uint8_t *bytes, uint8_t lengt
 }
 
 // 从流式缓存提取下一帧，处理半帧、粘包、迟到帧和噪声重同步。
-AP_ESC_2BLD6010::ParseResult AP_ESC_2BLD6010::ResponseStream::next(uint8_t expected_address, Data &data)
+AP_ESC_Telem_2BLD6010::ParseResult AP_ESC_Telem_2BLD6010::ResponseStream::next(uint8_t expected_address, DiagnosticData &data)
 {
     if (_length == 0) {
         return ParseResult::INCOMPLETE;
@@ -405,13 +405,13 @@ AP_ESC_2BLD6010::ParseResult AP_ESC_2BLD6010::ResponseStream::next(uint8_t expec
 }
 
 // 丢弃当前缓存内容，在开始新 outstanding request 时建立干净接收状态。
-void AP_ESC_2BLD6010::ResponseStream::reset()
+void AP_ESC_Telem_2BLD6010::ResponseStream::reset()
 {
     _length = 0;
 }
 
 // 从缓存头部消费指定字节数，并前移保留的未解析数据。
-void AP_ESC_2BLD6010::ResponseStream::consume(uint8_t count)
+void AP_ESC_Telem_2BLD6010::ResponseStream::consume(uint8_t count)
 {
     if (count >= _length) {
         _length = 0;
