@@ -8,6 +8,8 @@
  * 参数来源见 AP_CompanionComputer::apply_brush_runtime_params()。
  */
 
+extern const AP_HAL::HAL &hal;
+
 AP_Brush *AP_Brush::_singleton;
 
 AP_Brush::AP_Brush()
@@ -35,8 +37,13 @@ void AP_Brush::set_active(bool active)
     if (!_active) {
         // 离开 VGSL：立即停刷，不保留上一周期 PWM
         write_outputs(false, false, 0);
+        return;
+    }
+
+    // 进入 VGSL：未解锁只停刷；已解锁才按缓存期望恢复
+    if (!hal.util->get_soft_armed()) {
+        write_outputs(false, false, 0);
     } else {
-        // 进入 VGSL：按已缓存的期望状态恢复输出（通常为全关，_enter 会先 stop_brushes）
         write_outputs(_front_on, _rear_on, _power_pct);
     }
 }
@@ -49,6 +56,12 @@ void AP_Brush::update(bool front_on, bool rear_on, uint8_t power_pct)
 
     if (!_active) {
         // 非 VGSL：只记期望，不写电调（防止其他模式误触滚刷）
+        return;
+    }
+
+    // 未解锁：保留期望，强制停转输出
+    if (!hal.util->get_soft_armed()) {
+        write_outputs(false, false, 0);
         return;
     }
 

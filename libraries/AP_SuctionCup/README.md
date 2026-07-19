@@ -45,12 +45,14 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 |------|------|
 | `_enter()` | `clear_fault()` → `set_active(true)` |
 | `_exit()` | `emergency_release()` → `set_active(false)` |
-| `update()` | `suction_cup.update()` → `check_tilt_safety()` → … → `try_recover_safety_hold()` |
-| 转弯 LOWER_SUCTION | `lower()`，等 `is_lowered()` |
+| `update()` | 已解锁：`suction_cup.update()` → 倾角/NCU 安全…；**未解锁**：外设安全位并中止 TURN/NAV |
+| 转弯 LOWER_SUCTION | `lower()`，等 `is_lowered()`（需已解锁） |
 | 转弯 RAISE_SUCTION | `raise()`，等 `is_raised()` |
 | 急停指令 | `emergency_release()`（`update_estop()` 仅停车+关刷） |
+| 未解锁 / 中途 disarm | 滚刷停、吸盘释放（抬起+放气+停泵）；`lower()` 拒绝 |
 
-转弯阶段由 `AP_SuctionCup` 内部时序 + `is_lowered()` / `is_raised()` 驱动，Mode 层无额外纯延时。
+转弯阶段由 `AP_SuctionCup` 内部时序 + `is_lowered()` / `is_raised()` 驱动，Mode 层无额外纯延时。  
+进 VGSL **不要求**先解锁；未解锁时可进模式，但外设保持安全位，解锁后才允许滚刷/气泵/气阀/吸附动作。
 
 ---
 
@@ -254,4 +256,5 @@ NCU 无吸盘专用协议；由 FCU 在转弯序列内调用本库。
 1. 无负压/到位传感器，仅靠 `SCUP_*_DLY_MS` 判定吸附完成  
 2. 放下与抬起共用 `SCUP_LIFT_DLY_MS`  
 3. `LOWER_SEAL` 后下一周期即开泵，无单独 seal 等待  
-4. 运行中 FAULT 需退出再进 VGSL 或地面站 `clear_fault()`，无 NCU 专用清障指令
+4. 运行中 FAULT 需退出再进 VGSL 或地面站 `clear_fault()`，无 NCU 专用清障指令  
+5. 未解锁时外设强制安全位；解锁预检含 `servo_checks`，VGSL 侧不再单独复检

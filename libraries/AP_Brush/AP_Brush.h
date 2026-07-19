@@ -16,7 +16,8 @@
  *   k_vgsolar_brush_rear  = 158  后滚刷
  *
  * 电调约定：1000 µs = 停转，2000 µs = 满速；power_pct 1~100% 线性映射其间。
- * 安全：仅 _active=true（VGSL 模式内）时才向电调写 PWM；非活动态 update() 只更新期望状态。
+ * 安全：仅 _active=true（VGSL 模式内）且已 soft_armed 时才输出非停转 PWM；
+ *       非活动或未解锁时 update()/set_active 只停刷或更新期望。
  */
 class AP_Brush
 {

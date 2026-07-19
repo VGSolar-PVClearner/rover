@@ -9,6 +9,8 @@
  * 单例由 Rover ParametersG2::suction_cup 构造。
  */
 
+extern const AP_HAL::HAL &hal;
+
 AP_SuctionCup *AP_SuctionCup::_singleton;
 
 const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
@@ -152,6 +154,23 @@ void AP_SuctionCup::update()
         return;
     }
 
+    // 未解锁：禁止保压/吸附，推进释放到安全位
+    if (!hal.util->get_soft_armed()) {
+        _frozen = false;
+        if (_state == State::RAISING) {
+            update_raising(now);
+        } else if (_state != State::RAISED && _state != State::INACTIVE) {
+            emergency_release();
+            if (_state == State::RAISING) {
+                update_raising(now);
+            }
+        } else {
+            apply_safe_idle();
+        }
+        log_status();
+        return;
+    }
+
     // 冻结态：不再推进状态机，仅维持关泵+密封（或 LOWERING 中途的部分阀位）
     if (_frozen) {
         apply_frozen_hold();
@@ -186,6 +205,10 @@ void AP_SuctionCup::update()
 bool AP_SuctionCup::lower()
 {
     if (!_active || _frozen || !can_start_sequence()) {
+        return false;
+    }
+
+    if (!hal.util->get_soft_armed()) {
         return false;
     }
 

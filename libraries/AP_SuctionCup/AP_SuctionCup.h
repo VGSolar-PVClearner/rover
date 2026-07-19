@@ -22,6 +22,7 @@
  * 吸附序列 lower()：放气停泵 → 放下 → 密封 → 开泵 → 等待负压 → LOWERED（关泵保密封）
  * 释放序列 raise()：关泵 → 放气 → 等待泄压 → 抬起 → RAISED
  * freeze()：关泵+保持密封，不主动抬起（NCU 200ms 超时 / 倾角过大）
+ * 未 soft_armed：lower() 拒绝；update() 强制释放/安全位（抬起+放气+停泵）
  *
  * 地面站参数前缀 SCUP_*；实例挂在 Rover ParametersG2::suction_cup。
  */
