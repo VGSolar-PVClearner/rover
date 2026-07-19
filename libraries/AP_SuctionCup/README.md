@@ -61,21 +61,21 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 ### 4.1 吸附序列 lower()
 
 ```
-放气+停泵 → 放下升降 → 等 LIFT_DLY → 密封阀 → 开泵 → 等 VAC_DLY → LOWERED
+放气+停泵 → 缓速放下升降 → 到位后再等 LIFT_DLY → 密封阀 → 开泵 → 等 VAC_DLY → LOWERED
 ```
 
 ### 4.2 LOWERED 维持（`apply_lowered_hold`）
 
 进入 LOWERED 后及转向全程：
 
-- 气泵 **停**（1000µs）
-- 气阀 **密封**（维持负压）
+- 气泵 **关**（Relay off）
+- 气阀 **密封**（Relay on）
 - 升降 **放下**
 
 ### 4.3 释放序列 raise()
 
 ```
-关泵 → 开阀放气 → 等 VENT_DLY → 抬起 → 等 LIFT_DLY → RAISED
+关泵 → 开阀放气 → 等 VENT_DLY → 缓速抬起 → 到位后再等 LIFT_DLY → RAISED
 ```
 
 ### 4.4 freeze() / unfreeze()
@@ -170,8 +170,10 @@ STOPPING → WAIT_STOPPED(500ms) → LOWER_SUCTION → TURNING → RAISE_SUCTION
 `send_turn_pwm_gcs()`：阶段切换立即上报，同阶段最多 1Hz。
 
 ```
-VG_SOLAR TURN pwm: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u
+VG_SOLAR TURN out: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u
 ```
+
+`lift` 为升降 PWM（µs）；`valve`/`pump` 为 0/1（阀 1=密封，泵 1=开）。
 
 | tph | 含义 |
 |-----|------|
@@ -194,30 +196,44 @@ bit7/bit9 在 mask 中时 motion_state 为 **0x05**，而非 0x03。
 
 | 项 | 说明 |
 |----|------|
-| SERVO5/10/11 → FUNCTION 159/160/161 | **需地面站手动配置** |
-| 升降 1000=抬 / 2000=放 | `SCUP_LIFT_PWM_*` 可调 |
-| 气阀 1000=放气 / 2000=密封 | `SCUP_VLV_PWM_*` 可调 |
+| 升降 SERVO → FUNCTION **159** | **需地面站手动配置** |
+| 升降默认 1900=抬 / 1100=放 | `SCUP_LIFT_PWM_*` 可调；按 `SCUP_LIFT_RATE` 缓变 |
+| 气阀 / 气泵 | **Relay**（`SCUP_VLV_RLY` / `SCUP_PUMP_RLY`）；需配 `RELAYx_PIN` 等 |
 | 吸附判定 | **仅延时**，无负压传感器（实机建议后续接入） |
 
 ### 地面站参数（SCUP_）
 
 | 参数 | 默认 | 范围 | 含义 |
 |------|------|------|------|
-| SCUP_PUMP_PWR | 100 | 0~100 | 建负压时气泵功率%，100→2000µs |
-| SCUP_LIFT_DLY_MS | **2000** | 100~5000 | 升降动作后等待（放下/抬起共用） |
+| SCUP_LIFT_DLY_MS | **2000** | 0~5000 | 升降 PWM **到位后**额外等待（放下/抬起共用） |
 | SCUP_VAC_DLY_MS | **3000** | 100~10000 | 开泵后建立负压等待 |
 | SCUP_VENT_DLY_MS | **2000** | 100~5000 | 放气后、抬起前等待 |
-| SCUP_ACT_TOUT_MS | **20000** | 1000~30000 | lower/raise 整段超时 → FAULT |
+| SCUP_ACT_TOUT_MS | **30000** | 1000~60000 | lower/raise 整段超时 → FAULT |
+| SCUP_LIFT_PWM_R | **1900** | 1000~2000 | 抬起位置 PWM µs |
+| SCUP_LIFT_PWM_L | **1100** | 1000~2000 | 放下位置 PWM µs |
+| SCUP_LIFT_RATE | **400** | 50~5000 | 升降 PWM 缓变速率 µs/s（默认约 2s 走完 800µs） |
+| SCUP_VLV_RLY | **0** | 0~5 | 气阀 Relay 实例（0=RELAY1）；on=密封 / off=放气 |
+| SCUP_PUMP_RLY | **1** | 0~5 | 气泵 Relay 实例（1=RELAY2）；on=开泵 / off=关泵 |
 
-`ACT_TOUT_MS` 应大于 `LIFT_DLY+VAC_DLY` 与 `VENT_DLY+LIFT_DLY` 之和。
+`ACT_TOUT_MS` 应覆盖：缓速时间 + `LIFT_DLY` + `VAC_DLY`（或 `VENT_DLY` + 缓速 + `LIFT_DLY`）。
 
-### SERVO Function
+### 升降 SERVO
 
 | Function | 典型通道 | 用途 |
 |----------|----------|------|
 | 159 VGSolarSuctionLift | SERVO5 | 升降 |
-| 160 VGSolarAirValve | SERVO10 | 气阀 |
-| 161 VGSolarAirPump | SERVO11 | 气泵 |
+
+### Relay 配置示例
+
+```text
+RELAY1_PIN = <气阀 GPIO>
+RELAY1_FUNCTION = 1          # Relay
+RELAY2_PIN = <气泵 GPIO>
+RELAY2_FUNCTION = 1
+# 若硬件低有效：RELAYx_INVERTED = 1
+```
+
+旧 SERVO FUNCTION 160/161（气阀/气泵 PWM）已不再由本库使用。
 
 ---
 
@@ -245,7 +261,8 @@ bit7/bit9 在 mask 中时 motion_state 为 **0x05**，而非 0x03。
 | `emergency_release()` | 急停/退出：完整释放 |
 | `clear_fault()` | 清除 FAULT（`_enter()` 时调用） |
 | `is_lowered()` / `is_raised()` / `is_busy()` / `is_frozen()` / `has_fault()` | 状态查询 |
-| `get_last_*_pwm_us()` / `get_state_u8()` / `get_phase_u8()` | GCS 调试 |
+| `get_last_lift_pwm_us()` / `get_last_valve_on()` / `get_last_pump_on()` | GCS 调试 |
+| `get_state_u8()` / `get_phase_u8()` | GCS 调试 |
 
 NCU 无吸盘专用协议；由 FCU 在转弯序列内调用本库。
 
@@ -253,8 +270,9 @@ NCU 无吸盘专用协议；由 FCU 在转弯序列内调用本库。
 
 ## 十二、已知限制
 
-1. 无负压/到位传感器，仅靠 `SCUP_*_DLY_MS` 判定吸附完成  
-2. 放下与抬起共用 `SCUP_LIFT_DLY_MS`  
+1. 无负压/到位传感器，仅靠缓速到位 + `SCUP_*_DLY_MS` 判定吸附完成  
+2. 放下与抬起共用 `SCUP_LIFT_DLY_MS`（在 PWM 到位后起算）  
 3. `LOWER_SEAL` 后下一周期即开泵，无单独 seal 等待  
 4. 运行中 FAULT 需退出再进 VGSL 或地面站 `clear_fault()`，无 NCU 专用清障指令  
-5. 未解锁时外设强制安全位；解锁预检含 `servo_checks`，VGSL 侧不再单独复检
+5. 未解锁时外设强制安全位；解锁预检含 `servo_checks`，VGSL 侧不再单独复检  
+6. 已保存旧参数的飞控不会自动更新升降默认值，需手动设 `LIFT_PWM_R/L` 或重置 SCUP 相关参数

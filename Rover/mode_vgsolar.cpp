@@ -909,13 +909,13 @@ void ModeVGSolar::send_turn_pwm_gcs(bool force)
 
     const auto &scup = AP::suction_cup();
     gcs().send_text(MAV_SEVERITY_INFO,
-                    "VG_SOLAR TURN pwm: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u",
+                    "VG_SOLAR TURN out: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u",
                     unsigned(_turn_phase),
                     unsigned(scup.get_state_u8()),
                     unsigned(scup.get_phase_u8()),
                     unsigned(scup.get_last_lift_pwm_us()),
-                    unsigned(scup.get_last_valve_pwm_us()),
-                    unsigned(scup.get_last_pump_pwm_us()));
+                    unsigned(scup.get_last_valve_on()),
+                    unsigned(scup.get_last_pump_on()));
 }
 
 void ModeVGSolar::update_turn()
