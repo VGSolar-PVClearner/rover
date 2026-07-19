@@ -1309,6 +1309,11 @@ private:
     uint32_t _last_turn_pwm_gcs_ms;
     TurnPhase _last_turn_gcs_phase;
 
+    // 未解锁时外设强制安全位；边沿提示限频
+    static constexpr uint32_t DISARMED_ACTUATOR_GCS_INTERVAL_MS = 5000;
+    bool _actuators_were_armed;
+    uint32_t _last_disarmed_actuator_gcs_ms;
+
     AP_Int8  _enabled;
     AP_Float _kp_yaw;
     AP_Float _kp_speed;
@@ -1338,6 +1343,8 @@ private:
     void complete_turn();
     void send_turn_pwm_gcs(bool force = false);
     void set_brush_control(uint8_t brush_id, bool turn_on);
+    // 未解锁：停刷、吸盘释放/安全位，中止 TURN/NAV/YAW 运动
+    void apply_disarmed_actuator_safety();
     void capture_ned_origin();
     bool nav_position_reached() const;
     void complete_nav_arrived();

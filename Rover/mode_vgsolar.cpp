@@ -23,6 +23,7 @@
  *
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
  * 安全：倾角>30° 或 NCU 200ms 无帧 → freeze 吸盘 + safety_hold；条件恢复后 raise
+ *       未解锁 → 滚刷/气泵/气阀/吸盘强制安全位，禁止运动类 NCU 指令
  *
  */
 
@@ -105,7 +106,9 @@ ModeVGSolar::ModeVGSolar(void) :
     _turn_frozen(false),
     _safety_hold_mask(0),
     _last_turn_pwm_gcs_ms(0),
-    _last_turn_gcs_phase(TurnPhase::IDLE)
+    _last_turn_gcs_phase(TurnPhase::IDLE),
+    _actuators_were_armed(false),
+    _last_disarmed_actuator_gcs_ms(0)
 {
     AP_Param::setup_object_defaults(this, var_info);
 }
@@ -132,11 +135,13 @@ bool ModeVGSolar::_enter()
     // 记录 NED 全局原点，供后续 NED 导航换算经纬度
     capture_ned_origin();
 
-    // 外设激活：滚刷/吸盘仅在 VGSL 内输出 PWM
+    // 外设激活：滚刷/吸盘仅在 VGSL 内输出；未 soft_armed 时库内仍强制安全位
     rover.companion_computer.stop_brushes();
     AP::brush().set_active(true);
     AP::suction_cup().clear_fault();
     AP::suction_cup().set_active(true);
+    _actuators_were_armed = false;
+    _last_disarmed_actuator_gcs_ms = 0;
 
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: entered");
     return true;
@@ -160,9 +165,33 @@ void ModeVGSolar::_exit()
 
 void ModeVGSolar::update()
 {
+    // 与履带/外设一致：需 arm 且安全开关允许（soft_armed）
+    const bool armed = hal.util->get_soft_armed();
+
     // 低电压：强制关刷；无有效电量读数时不触发（台架安全）
     if (rover.companion_computer.is_low_battery()) {
         rover.companion_computer.stop_brushes();
+    }
+
+    // 未解锁：外设回安全位，不跑运动子模式（仍推进吸盘释放序列）
+    if (!armed) {
+        apply_disarmed_actuator_safety();
+        AP::suction_cup().update();
+        sync_suction_fault_flags();
+        read_companion_commands();  // 仅急停等系统指令生效；运动指令在函数内拒绝
+        apply_disarmed_actuator_safety();
+        stop_vehicle();
+        if (_vg_submode == VGSubMode::ESTOP) {
+            update_estop();
+        } else {
+            update_standby();
+        }
+        return;
+    }
+
+    if (!_actuators_were_armed) {
+        _actuators_were_armed = true;
+        gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: armed, actuators enabled");
     }
 
     AP::suction_cup().update();
@@ -212,6 +241,36 @@ void ModeVGSolar::update()
         break;
     default:
         break;
+    }
+}
+
+void ModeVGSolar::apply_disarmed_actuator_safety()
+{
+    const bool disarm_edge = _actuators_were_armed;
+    _actuators_were_armed = false;
+
+    rover.companion_computer.stop_brushes();
+    AP::suction_cup().emergency_release();
+
+    // 中止依赖吸盘/运动的子模式，回到待机（保留 ESTOP）
+    if (_vg_submode == VGSubMode::TURN) {
+        _turn_phase = TurnPhase::IDLE;
+        _turn_frozen = false;
+        _vg_submode = VGSubMode::STANDBY;
+        clear_safety_hold_mask();
+    } else if (_vg_submode == VGSubMode::NAV) {
+        cancel_navigation();
+    } else if (_vg_submode == VGSubMode::YAW || _vg_submode == VGSubMode::YAWRATE) {
+        _vg_submode = VGSubMode::STANDBY;
+        _target_speed_ms = 0.0f;
+    }
+
+    const uint32_t now = AP_HAL::millis();
+    if (disarm_edge ||
+        (_last_disarmed_actuator_gcs_ms == 0) ||
+        (now - _last_disarmed_actuator_gcs_ms) >= DISARMED_ACTUATOR_GCS_INTERVAL_MS) {
+        _last_disarmed_actuator_gcs_ms = now;
+        gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: disarmed, actuators safe");
     }
 }
 
@@ -350,8 +409,14 @@ void ModeVGSolar::read_companion_commands()
         return;
     }
 
+    const bool armed = hal.util->get_soft_armed();
+
     if (cc.is_new_turn()) {
         cc.clear_new_turn_flag();
+        if (!armed) {
+            gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: turn rejected, disarmed");
+            return;
+        }
         const TurnData &cmd = cc.get_latest_turn();
         _last_ncu_cmd_ms = AP_HAL::millis();
         start_turn(cmd);
@@ -368,6 +433,12 @@ void ModeVGSolar::read_companion_commands()
         if (cmd.nav_mode == NAV_MODE_CANCEL) {
             cancel_navigation();
             cc.send_position_ack(CMD_ACK_SUCCESS);
+            return;
+        }
+
+        if (!armed) {
+            gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: nav rejected, disarmed");
+            cc.send_position_ack(CMD_ACK_FAILED);
             return;
         }
 
@@ -470,6 +541,9 @@ void ModeVGSolar::read_companion_commands()
 
     if (cc.is_new_speed_ctrl()) {
         cc.clear_new_speed_flag();
+        if (!armed) {
+            return;
+        }
         const SpeedCtrlData &cmd = cc.get_latest_speed_ctrl();
         _last_ncu_cmd_ms = AP_HAL::millis();
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
