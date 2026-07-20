@@ -2,6 +2,16 @@
 
 本文档描述 `AP_SuctionCup` 与 `ModeVGSolar`（VGSL）集成时的行为约定，对齐 `protocol.md` 与 `FCU_开发指南.md`。
 
+### 源码拆分
+
+| 文件 | 内容 |
+|------|------|
+| `AP_SuctionCup.h` | 公共 API、状态机声明、`SCUP_*` 成员 |
+| `AP_SuctionCup.cpp` | 参数、升降缓速、Relay、lower/raise 状态机 |
+| `AP_SuctionCup_IR.cpp` | 升降红外 GPIO / 消抖 / 到位等待 |
+
+参数仍统一为 `SCUP_*` / `SCUP_IR_*`，不单独建顶层 `AP_` 库。
+
 ---
 
 ## 一、协议字段分工
@@ -61,8 +71,11 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 ### 4.1 吸附序列 lower()
 
 ```
-放气+停泵 → 缓速放下升降 → 到位后再等 LIFT_DLY → 密封阀 → 开泵 → 等 VAC_DLY → LOWERED
+放气+停泵 → 缓速放下 → PWM 到位后等到位（红外有铁片→无铁片，或 LIFT_DLY）→ 密封阀 → 开泵 → 等 VAC_DLY → LOWERED
 ```
+
+有红外时：缓速过程中即可记下「有铁片」；PWM 到位后再等到「完全放下」。`LIFT_TOUT_MS`（自 PWM 到位起算）内未完成 → FAULT，**不密封、不开泵**。  
+（避免断线/下拉一直读「无铁片」时立刻密封开泵；也避免到位时铁片已离开而从未记过「有」。）
 
 ### 4.2 LOWERED 维持（`apply_lowered_hold`）
 
@@ -75,8 +88,11 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 ### 4.3 释放序列 raise()
 
 ```
-关泵 → 开阀放气 → 等 VENT_DLY → 缓速抬起 → 到位后再等 LIFT_DLY → RAISED
+关泵 → 开阀放气 → 等 VENT_DLY → 缓速抬起 → 等到位（红外见铁片+LIFT_DLY 且 PWM 到位，或仅 LIFT_DLY）→ RAISED
 ```
+
+有红外时抬起到位：缓速过程中即可等到「有铁片」→ 再等 `LIFT_DLY_MS` 补行程（见过后抖动不重计时）；结束前还须 PWM 到位。  
+`LIFT_TOUT_MS` 内一直看不到铁片 → FAULT。无红外时：PWM 到位后再等 `LIFT_DLY_MS`。
 
 ### 4.4 freeze() / unfreeze()
 
@@ -141,7 +157,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 ### 6.2 吸盘故障 bit4
 
-- 触发：`lower`/`raise` 超时（`SCUP_ACT_TOUT_MS`）等 → `State::FAULT`
+- 触发：`lower`/`raise` 超时（`SCUP_ACT_TOUT_MS`）、升降红外到位超时（`SCUP_LIFT_TOUT_MS`）等 → `State::FAULT`
 - 收尾：`abort_turn_suction_fault()` — STANDBY + `emergency_release()` + bit4
 - 新 turn：`has_fault()` 或 `_safety_hold_mask` 或 `is_busy()` → 拒绝
 - 清除：`_enter()` VGSL 时 `clear_fault()`
@@ -199,13 +215,13 @@ bit7/bit9 在 mask 中时 motion_state 为 **0x05**，而非 0x03。
 | 升降 SERVO → FUNCTION **159** | **需地面站手动配置** |
 | 升降默认 1900=抬 / 1100=放 | `SCUP_LIFT_PWM_*` 可调；按 `SCUP_LIFT_RATE` 缓变 |
 | 气阀 / 气泵 | **Relay**（`SCUP_VLV_RLY` / `SCUP_PUMP_RLY`）；需配 `RELAYx_PIN` 等 |
-| 吸附判定 | **仅延时**，无负压传感器（实机建议后续接入） |
+| 升降到位 | 槽型光电（`SCUP_IR_PIN`，默认 98）或禁用后仅 `LIFT_DLY`；负压仍仅 `VAC_DLY` |
 
 ### 地面站参数（SCUP_）
 
 | 参数 | 默认 | 范围 | 含义 |
 |------|------|------|------|
-| SCUP_LIFT_DLY_MS | **2000** | 0~5000 | 升降 PWM **到位后**额外等待（放下/抬起共用） |
+| SCUP_LIFT_DLY_MS | **2000** | 0~5000 | 无红外：PWM **到位后**等待；有红外抬起：见到铁片后的补行程 |
 | SCUP_VAC_DLY_MS | **3000** | 100~10000 | 开泵后建立负压等待 |
 | SCUP_VENT_DLY_MS | **2000** | 100~5000 | 放气后、抬起前等待 |
 | SCUP_ACT_TOUT_MS | **30000** | 1000~60000 | lower/raise 整段超时 → FAULT |
@@ -214,8 +230,15 @@ bit7/bit9 在 mask 中时 motion_state 为 **0x05**，而非 0x03。
 | SCUP_LIFT_RATE | **400** | 50~5000 | 升降 PWM 缓变速率 µs/s（默认约 2s 走完 800µs） |
 | SCUP_VLV_RLY | **0** | 0~5 | 气阀 Relay 实例（0=RELAY1）；on=密封 / off=放气 |
 | SCUP_PUMP_RLY | **1** | 0~5 | 气泵 Relay 实例（1=RELAY2）；on=开泵 / off=关泵 |
+| SCUP_IR_PIN | **98** | ≥0 或 -1 | 槽型光电 GPIO（VGSolar BP_IR）；**-1=禁用** |
+| SCUP_IR_POL | **0** | 0/1 | 0：高=有铁片、低=完全放下；1：反相 |
+| SCUP_IR_DEB_MS | **30** | 0~500 | 红外电平消抖时间 |
+| SCUP_LIFT_TOUT_MS | **5000** | 500~15000 | 有红外时等放下/见到铁片超时 → FAULT |
 
-`ACT_TOUT_MS` 应覆盖：缓速时间 + `LIFT_DLY` + `VAC_DLY`（或 `VENT_DLY` + 缓速 + `LIFT_DLY`）。
+`ACT_TOUT_MS` 应覆盖：缓速时间 + 红外/`LIFT_DLY` + `VAC_DLY`（或 `VENT_DLY` + 缓速 + 红外/`LIFT_DLY`）。  
+有红外时另受 `LIFT_TOUT_MS` 约束（下降超时不会进入密封/开泵）。
+
+红外输入：`INPUT` + **PULLDOWN**（对齐 hwdef）；脚无效时回退 `LIFT_DLY_MS` 并打 GCS 警告。
 
 ### 升降 SERVO
 
@@ -270,9 +293,10 @@ NCU 无吸盘专用协议；由 FCU 在转弯序列内调用本库。
 
 ## 十二、已知限制
 
-1. 无负压/到位传感器，仅靠缓速到位 + `SCUP_*_DLY_MS` 判定吸附完成  
-2. 放下与抬起共用 `SCUP_LIFT_DLY_MS`（在 PWM 到位后起算）  
+1. 负压仍仅靠 `SCUP_VAC_DLY_MS`，无真空压力传感器  
+2. 红外表示「是否完全放下」（槽型+铁片），不是双端点；抬起=见到铁片后再 `LIFT_DLY`，且须 PWM 到位  
 3. `LOWER_SEAL` 后下一周期即开泵，无单独 seal 等待  
 4. 运行中 FAULT 需退出再进 VGSL 或地面站 `clear_fault()`，无 NCU 专用清障指令  
 5. 未解锁时外设强制安全位；解锁预检含 `servo_checks`，VGSL 侧不再单独复检  
-6. 已保存旧参数的飞控不会自动更新升降默认值，需手动设 `LIFT_PWM_R/L` 或重置 SCUP 相关参数
+6. 红外脚无效时回退 `LIFT_DLY_MS` 并打 GCS 警告；`IR_POL` 需实机标定  
+7. 已保存旧参数的飞控不会自动更新升降默认值，需手动设 `LIFT_PWM_R/L` 或重置 SCUP 相关参数
