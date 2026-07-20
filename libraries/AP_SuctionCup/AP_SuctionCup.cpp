@@ -8,6 +8,7 @@
  * AP_SuctionCup 实现：升降 PWM 缓速 + 气阀/气泵 Relay 异步状态机。
  * 不解析 NCU 协议；时序参数通过 SCUP_* 地面站参数可调。
  * 单例由 Rover ParametersG2::suction_cup 构造。
+ * 升降红外 GPIO/消抖/到位等待：见 AP_SuctionCup_IR.cpp。
  */
 
 extern const AP_HAL::HAL &hal;
@@ -17,7 +18,7 @@ AP_SuctionCup *AP_SuctionCup::_singleton;
 const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @Param: LIFT_DLY_MS
     // @DisplayName: Lift settle time after ramp
-    // @Description: Extra wait after lift PWM reaches target before next suction step
+    // @Description: Without IR: wait after lift PWM reaches target. With IR on raise: extra wait after blade is seen in the slot.
     // @Units: ms
     // @Range: 0 5000
     // @User: Standard
@@ -85,6 +86,36 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @User: Standard
     AP_GROUPINFO("PUMP_RLY", 10, AP_SuctionCup, _pump_relay, 1),
 
+    // @Param: IR_PIN
+    // @DisplayName: Lift IR GPIO pin
+    // @Description: Slot photo-sensor GPIO. Default 98 (VGSolar BP_IR). -1 disables IR and uses LIFT_DLY_MS only.
+    // @Values: -1:Disabled,98:VGSolarBP_IR
+    // @User: Standard
+    AP_GROUPINFO("IR_PIN", 11, AP_SuctionCup, _ir_pin, 98),
+
+    // @Param: IR_POL
+    // @DisplayName: Lift IR polarity
+    // @Description: 0: high=blade present (not fully lowered), low=fully lowered. 1: inverted.
+    // @Values: 0:HighPresent, 1:Inverted
+    // @User: Standard
+    AP_GROUPINFO("IR_POL", 12, AP_SuctionCup, _ir_pol, 0),
+
+    // @Param: IR_DEB_MS
+    // @DisplayName: Lift IR debounce
+    // @Description: Time the IR GPIO level must remain stable before accepted
+    // @Units: ms
+    // @Range: 0 500
+    // @User: Advanced
+    AP_GROUPINFO("IR_DEB_MS", 13, AP_SuctionCup, _ir_deb_ms, 30),
+
+    // @Param: LIFT_TOUT_MS
+    // @DisplayName: Lift position timeout
+    // @Description: Max wait for IR lower (fully down) or raise (blade seen). On lower timeout, seal/pump are not started.
+    // @Units: ms
+    // @Range: 500 15000
+    // @User: Standard
+    AP_GROUPINFO("LIFT_TOUT_MS", 14, AP_SuctionCup, _lift_timeout_ms, 5000),
+
     AP_GROUPEND
 };
 
@@ -109,6 +140,13 @@ AP_SuctionCup::AP_SuctionCup()
     _lift_slew = false;
     _lift_ramp_last_ms = 0;
     _lift_reached_ms = 0;
+
+    _ir_pin_configured = -1;
+    _ir_raw_last = 0;
+    _ir_debounced = 0;
+    _ir_debounce_start_ms = 0;
+    _lift_ir_edge_ms = 0;
+    _lift_saw_blade = false;
 
     _last_lift_pwm = 1900;
     _last_valve_on = false;
@@ -381,6 +419,14 @@ void AP_SuctionCup::begin_lower()
     write_pump(false);
     request_lift(uint16_t(_lift_pwm_lowered.get()), true);
 
+    // 重新开始消抖窗口，避免沿用进入 WAIT 前的旧稳定电平误判
+    if (ir_sensor_enabled()) {
+        ensure_ir_pin_setup();
+        _ir_debounce_start_ms = now;
+        _lift_ir_edge_ms = 0;
+        _lift_saw_blade = false;
+    }
+
     log_status(true);
 }
 
@@ -540,23 +586,44 @@ void AP_SuctionCup::write_pump(bool on)
 }
 
 // 吸附 / 释放子状态机（每 update() 推进一步）
+// 升降 WAIT：缓速到位后，有红外走 check_lift_position_wait()（见 AP_SuctionCup_IR.cpp）
 void AP_SuctionCup::update_lowering(uint32_t now)
 {
     switch (_phase) {
-    case Phase::LOWER_WAIT_LIFT:
+    case Phase::LOWER_WAIT_LIFT: {
+        // 缓速过程中也读红外并记下「见过铁片」，避免到位时已无铁片导致永远等不到有→无
+        if (ir_sensor_enabled()) {
+            update_ir_debounce(now);
+            if (_ir_pin_configured >= 0 && ir_blade_present()) {
+                _lift_saw_blade = true;
+            }
+        }
+
+        // PWM 到位后再判「无铁片」/延时；LIFT_TOUT 自到位起算
         if (!lift_at_target()) {
             _lift_reached_ms = 0;
             break;
         }
         if (_lift_reached_ms == 0) {
             _lift_reached_ms = now;
-        }
-        if (now - _lift_reached_ms >= uint32_t(_lift_delay_ms.get())) {
-            _phase = Phase::LOWER_SEAL;
             _phase_start_ms = now;
-            write_valve(true);
         }
+        if (ir_sensor_enabled()) {
+            const LiftWaitResult wr = check_lift_position_wait(now, true);
+            if (wr == LiftWaitResult::Faulted) {
+                break;
+            }
+            if (wr != LiftWaitResult::Done) {
+                break;
+            }
+        } else if (now - _lift_reached_ms < uint32_t(_lift_delay_ms.get())) {
+            break;
+        }
+        _phase = Phase::LOWER_SEAL;
+        _phase_start_ms = now;
+        write_valve(true);
         break;
+    }
 
     case Phase::LOWER_SEAL:
         // 密封后立即开泵（无额外等待）
@@ -610,22 +677,41 @@ void AP_SuctionCup::update_raising(uint32_t now)
     case Phase::RAISE_LIFT:
         _phase = Phase::RAISE_WAIT_LIFT;
         _phase_start_ms = now;
+        if (ir_sensor_enabled()) {
+            ensure_ir_pin_setup();
+            _ir_debounce_start_ms = now;
+            _lift_ir_edge_ms = 0;
+            _lift_saw_blade = false;
+        }
         break;
 
-    case Phase::RAISE_WAIT_LIFT:
-        if (!lift_at_target()) {
-            _lift_reached_ms = 0;
-            break;
+    case Phase::RAISE_WAIT_LIFT: {
+        if (ir_sensor_enabled()) {
+            // 缓速过程中即可见铁片；Done 后仍须 PWM 到位才结束
+            const LiftWaitResult wr = check_lift_position_wait(now, false);
+            if (wr == LiftWaitResult::Faulted) {
+                break;
+            }
+            if (wr != LiftWaitResult::Done || !lift_at_target()) {
+                break;
+            }
+        } else {
+            if (!lift_at_target()) {
+                _lift_reached_ms = 0;
+                break;
+            }
+            if (_lift_reached_ms == 0) {
+                _lift_reached_ms = now;
+            }
+            if (now - _lift_reached_ms < uint32_t(_lift_delay_ms.get())) {
+                break;
+            }
         }
-        if (_lift_reached_ms == 0) {
-            _lift_reached_ms = now;
-        }
-        if (now - _lift_reached_ms >= uint32_t(_lift_delay_ms.get())) {
-            _phase = Phase::NONE;
-            _state = State::RAISED;
-            log_status(true);
-        }
+        _phase = Phase::NONE;
+        _state = State::RAISED;
+        log_status(true);
         break;
+    }
 
     default:
         break;
