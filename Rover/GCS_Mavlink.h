@@ -48,6 +48,9 @@ private:
     void handle_message(const mavlink_message_t &msg) override;
     bool handle_guided_request(AP_Mission::Mission_Command &cmd) override;
     bool try_send_message(enum ap_message id) override;
+#ifdef HAL_SUCTION_PRESSURE_PIN
+    void send_suction_pressure2() const;
+#endif
 
     void handle_manual_control_axes(const mavlink_manual_control_t &packet, const uint32_t tnow) override;
     void handle_set_attitude_target(const mavlink_message_t &msg);

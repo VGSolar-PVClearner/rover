@@ -74,7 +74,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 放气+停泵 → 缓速放下 → PWM 到位后等到位（红外有铁片→无铁片，或 LIFT_DLY）→ 密封阀 → 开泵 → 等 VAC_DLY → LOWERED
 ```
 
-有红外时：缓速过程中即可记下「有铁片」；PWM 到位后再等到「完全放下」。`LIFT_TOUT_MS`（自 PWM 到位起算）内未完成 → FAULT，**不密封、不开泵**。  
+有红外时：缓速过程中即可记下「有铁片」；PWM 到位后再等到「完全放下」。`LIFT_TO_MS`（自 PWM 到位起算）内未完成 → FAULT，**不密封、不开泵**。
 （避免断线/下拉一直读「无铁片」时立刻密封开泵；也避免到位时铁片已离开而从未记过「有」。）
 
 ### 4.2 LOWERED 维持（`apply_lowered_hold`）
@@ -92,7 +92,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 ```
 
 有红外时抬起到位：缓速过程中即可等到「有铁片」→ 再等 `LIFT_DLY_MS` 补行程（见过后抖动不重计时）；结束前还须 PWM 到位。  
-`LIFT_TOUT_MS` 内一直看不到铁片 → FAULT。无红外时：PWM 到位后再等 `LIFT_DLY_MS`。
+`LIFT_TO_MS` 内一直看不到铁片 → FAULT。无红外时：PWM 到位后再等 `LIFT_DLY_MS`。
 
 ### 4.4 freeze() / unfreeze()
 
@@ -157,7 +157,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 ### 6.2 吸盘故障 bit4
 
-- 触发：`lower`/`raise` 超时（`SCUP_ACT_TOUT_MS`）、升降红外到位超时（`SCUP_LIFT_TOUT_MS`）等 → `State::FAULT`
+- 触发：`lower`/`raise` 超时（`SCUP_ACT_TOUT_MS`）、升降红外到位超时（`SCUP_LIFT_TO_MS`）等 → `State::FAULT`
 - 收尾：`abort_turn_suction_fault()` — STANDBY + `emergency_release()` + bit4
 - 新 turn：`has_fault()` 或 `_safety_hold_mask` 或 `is_busy()` → 拒绝
 - 清除：`_enter()` VGSL 时 `clear_fault()`
@@ -233,10 +233,10 @@ bit7/bit9 在 mask 中时 motion_state 为 **0x05**，而非 0x03。
 | SCUP_IR_PIN | **98** | ≥0 或 -1 | 槽型光电 GPIO（VGSolar BP_IR）；**-1=禁用** |
 | SCUP_IR_POL | **0** | 0/1 | 0：高=有铁片、低=完全放下；1：反相 |
 | SCUP_IR_DEB_MS | **30** | 0~500 | 红外电平消抖时间 |
-| SCUP_LIFT_TOUT_MS | **5000** | 500~15000 | 有红外时等放下/见到铁片超时 → FAULT |
+| SCUP_LIFT_TO_MS | **5000** | 500~15000 | 有红外时等放下/见到铁片超时 → FAULT |
 
 `ACT_TOUT_MS` 应覆盖：缓速时间 + 红外/`LIFT_DLY` + `VAC_DLY`（或 `VENT_DLY` + 缓速 + 红外/`LIFT_DLY`）。  
-有红外时另受 `LIFT_TOUT_MS` 约束（下降超时不会进入密封/开泵）。
+有红外时另受 `LIFT_TO_MS` 约束（下降超时不会进入密封/开泵）。
 
 红外输入：`INPUT` + **PULLDOWN**（对齐 hwdef）；脚无效时回退 `LIFT_DLY_MS` 并打 GCS 警告。
 

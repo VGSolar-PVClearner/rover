@@ -3,6 +3,7 @@
 #include <GCS_MAVLink/GCS.h>
 #include <AP_Math/AP_Math.h>
 #include <AP_Relay/AP_Relay.h>
+#include <AP_SuctionPressure/AP_SuctionPressure.h>
 
 /*
  * AP_SuctionCup 实现：升降 PWM 缓速 + 气阀/气泵 Relay 异步状态机。
@@ -108,13 +109,37 @@ const AP_Param::GroupInfo AP_SuctionCup::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("IR_DEB_MS", 13, AP_SuctionCup, _ir_deb_ms, 30),
 
-    // @Param: LIFT_TOUT_MS
+    // @Param: LIFT_TO_MS
     // @DisplayName: Lift position timeout
     // @Description: Max wait for IR lower (fully down) or raise (blade seen). On lower timeout, seal/pump are not started.
     // @Units: ms
     // @Range: 500 15000
     // @User: Standard
-    AP_GROUPINFO("LIFT_TOUT_MS", 14, AP_SuctionCup, _lift_timeout_ms, 5000),
+    AP_GROUPINFO("LIFT_TO_MS", 14, AP_SuctionCup, _lift_timeout_ms, 5000),
+
+    // @Param: VAC_P_KPA
+    // @DisplayName: Vacuum pressure threshold
+    // @Description: Pressure must remain at or below this threshold before suction is considered established
+    // @Units: kPa
+    // @Range: -100 0
+    // @User: Standard
+    AP_GROUPINFO("VAC_P_KPA", 15, AP_SuctionCup, _vacuum_pressure_kpa, -50.0f),
+
+    // @Param: VAC_DEB_MS
+    // @DisplayName: Vacuum pressure debounce
+    // @Description: Time pressure must continuously satisfy the establish or loss threshold
+    // @Units: ms
+    // @Range: 0 2000
+    // @User: Standard
+    AP_GROUPINFO("VAC_DEB_MS", 16, AP_SuctionCup, _vacuum_debounce_ms, 300),
+
+    // @Param: VAC_HYST
+    // @DisplayName: Vacuum loss hysteresis
+    // @Description: Pressure rise above VAC_P_KPA plus this value triggers a vacuum loss warning after debounce
+    // @Units: kPa
+    // @Range: 0 50
+    // @User: Standard
+    AP_GROUPINFO("VAC_HYST", 17, AP_SuctionCup, _vacuum_hysteresis_kpa, 5.0f),
 
     AP_GROUPEND
 };
@@ -154,6 +179,9 @@ AP_SuctionCup::AP_SuctionCup()
     _last_logged_state = State::INACTIVE;
     _last_logged_phase = Phase::NONE;
     _last_log_ms = 0;
+    _vacuum_ok_start_ms = 0;
+    _vacuum_loss_start_ms = 0;
+    _vacuum_loss_warned = false;
 }
 
 void AP_SuctionCup::set_active(bool active)
@@ -219,6 +247,9 @@ void AP_SuctionCup::update()
     // 冻结态：不再推进状态机，仅维持关泵+密封（或 LOWERING 中途的部分阀位）
     if (_frozen) {
         apply_frozen_hold();
+        if (_frozen_vacuum_ready) {
+            check_vacuum_loss(now);
+        }
         log_status();
         return;
     }
@@ -238,6 +269,7 @@ void AP_SuctionCup::update()
         break;
     case State::LOWERED:
         apply_lowered_hold();  // 转向阶段持续维持吸附（关泵保密封）
+        check_vacuum_loss(now);
         break;
     default:
         break;
@@ -413,6 +445,9 @@ void AP_SuctionCup::begin_lower()
     _phase_start_ms = now;
     _sequence_start_ms = now;
     _lift_reached_ms = 0;
+    _vacuum_ok_start_ms = 0;
+    _vacuum_loss_start_ms = 0;
+    _vacuum_loss_warned = false;
 
     // 吸附第一步：先放气、停泵，再缓速放下升降（避免带压硬顶光伏板）
     write_valve(false);
@@ -637,14 +672,41 @@ void AP_SuctionCup::update_lowering(uint32_t now)
         _phase_start_ms = now;
         break;
 
-    case Phase::LOWER_WAIT_VACUUM:
-        if (now - _phase_start_ms >= uint32_t(_vacuum_delay_ms.get())) {
+    case Phase::LOWER_WAIT_VACUUM: {
+        if (!AP::suction_pressure().enabled()) {
+            if (now - _phase_start_ms < uint32_t(_vacuum_delay_ms.get())) {
+                break;
+            }
             _phase = Phase::NONE;
             _state = State::LOWERED;
             apply_lowered_hold();
             log_status(true);
+            break;
+        }
+
+        float pressure_kpa;
+        if (AP::suction_pressure().get_pressure_kpa(pressure_kpa) &&
+            pressure_kpa <= _vacuum_pressure_kpa.get()) {
+            if (_vacuum_ok_start_ms == 0) {
+                _vacuum_ok_start_ms = now;
+            }
+            if (now - _vacuum_ok_start_ms >= uint32_t(MAX(_vacuum_debounce_ms.get(), 0))) {
+                _phase = Phase::NONE;
+                _state = State::LOWERED;
+                apply_lowered_hold();
+                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Suction vacuum established %.1fkPa", (double)pressure_kpa);
+                log_status(true);
+            }
+        } else {
+            _vacuum_ok_start_ms = 0;
+        }
+
+        if (_state == State::LOWERING && now - _phase_start_ms >= uint32_t(_vacuum_delay_ms.get())) {
+            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Suction vacuum timeout");
+            set_fault();
         }
         break;
+    }
 
     default:
         break;
@@ -727,6 +789,44 @@ void AP_SuctionCup::check_action_timeout(uint32_t now)
     if (now - _sequence_start_ms > uint32_t(_action_timeout_ms.get())) {
         gcs().send_text(MAV_SEVERITY_WARNING, "VG_SCUP: action timeout");
         set_fault();
+    }
+}
+
+void AP_SuctionCup::check_vacuum_loss(const uint32_t now)
+{
+    auto &pressure = AP::suction_pressure();
+    if (!pressure.enabled()) {
+        _vacuum_loss_start_ms = 0;
+        _vacuum_loss_warned = false;
+        return;
+    }
+
+    float pressure_kpa;
+    if (!pressure.get_pressure_kpa(pressure_kpa)) {
+        _vacuum_loss_start_ms = 0;
+        return;
+    }
+
+    if (pressure_kpa > _vacuum_pressure_kpa.get() + _vacuum_hysteresis_kpa.get()) {
+        if (_vacuum_loss_start_ms == 0) {
+            _vacuum_loss_start_ms = now;
+        }
+        if (!_vacuum_loss_warned &&
+            now - _vacuum_loss_start_ms >= uint32_t(MAX(_vacuum_debounce_ms.get(), 0))) {
+            _vacuum_loss_warned = true;
+            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Suction pressure loss %.1fkPa", (double)pressure_kpa);
+            log_status(true);
+        }
+        return;
+    }
+
+    _vacuum_loss_start_ms = 0;
+    if (pressure_kpa <= _vacuum_pressure_kpa.get()) {
+        if (_vacuum_loss_warned) {
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Suction pressure recovered %.1fkPa", (double)pressure_kpa);
+            log_status(true);
+        }
+        _vacuum_loss_warned = false;
     }
 }
 

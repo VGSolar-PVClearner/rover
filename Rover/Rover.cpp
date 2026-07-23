@@ -87,11 +87,13 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     SCHED_TASK_CLASS(AP_Proximity,        &rover.g2.proximity,     update,         50,  200,  27),
 #endif
     SCHED_TASK_CLASS(AP_WindVane,         &rover.g2.windvane,      update,         20,  100,  30),
+    SCHED_TASK_CLASS(AP_SuctionPressure,  &rover.g2.suction_pressure, update,       50,  100,  33),
     SCHED_TASK(update_wheel_encoder,   50,    200,  36),
     SCHED_TASK(update_compass,         10,    200,  39),
 #if HAL_LOGGING_ENABLED
     SCHED_TASK(update_logging1,        10,    200,  45),
     SCHED_TASK(update_logging2,        10,    200,  48),
+    SCHED_TASK_CLASS(AP_SuctionPressure, &rover.g2.suction_pressure, log,           10,  100,  49),
 #endif
     SCHED_TASK_CLASS(GCS,                 (GCS*)&rover._gcs,       update_receive,                    400,    500,  51),
     SCHED_TASK_CLASS(GCS,                 (GCS*)&rover._gcs,       update_send,                       400,   1000,  54),
@@ -118,6 +120,7 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     SCHED_TASK(ekf_check,              10,    100,  87),
     SCHED_TASK_CLASS(ModeSmartRTL,        &rover.mode_smartrtl,    save_position,   3,  200,  90),
     SCHED_TASK(one_second_loop,         1,   1500,  96),
+    SCHED_TASK_CLASS(AP_SuctionPressure, &rover.g2.suction_pressure, send_status,    2,  100,  97),
 #if HAL_SPRAYER_ENABLED
     SCHED_TASK_CLASS(AC_Sprayer,          &rover.g2.sprayer,       update,          3,  90,  99),
 #endif

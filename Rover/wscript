@@ -1,7 +1,47 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
+import re
+
+
+PARAM_NAME_MAX_LEN = 16
+
+
+def _overlong_parameter_names(source_text, prefix):
+    suffixes = re.findall(r'AP_GROUPINFO\(\s*"([^"]+)"', source_text)
+    return [
+        (prefix + suffix, len(prefix + suffix))
+        for suffix in suffixes
+        if len(prefix + suffix) > PARAM_NAME_MAX_LEN
+    ]
+
+
+def _validate_vgsolar_parameter_names(bld):
+    if bld.env.BOARD != 'VGSolar':
+        return
+
+    parameter_groups = [
+        ('SCUP_', 'libraries/AP_SuctionCup/AP_SuctionCup.cpp'),
+        ('SPRESS_', 'libraries/AP_SuctionPressure/AP_SuctionPressure.cpp'),
+    ]
+    errors = []
+    for prefix, source_path in parameter_groups:
+        source_node = bld.srcnode.find_node(source_path)
+        if source_node is None:
+            bld.fatal('VGSolar parameter source not found: %s' % source_path)
+        for name, length in _overlong_parameter_names(source_node.read(), prefix):
+            errors.append('%s (%u chars) in %s' % (name, length, source_path))
+
+    if errors:
+        bld.fatal(
+            'VGSolar parameter names exceed the AP_Param 16-character limit:\n%s' %
+            '\n'.join(errors)
+        )
+
+
 def build(bld):
+    _validate_vgsolar_parameter_names(bld)
+
     vehicle = bld.path.name
     bld.ap_stlib(
         name=vehicle + '_libs',
@@ -26,6 +66,7 @@ def build(bld):
             'AP_CompanionComputer',
             'AP_Brush',
             'AP_SuctionCup',
+            'AP_SuctionPressure',
         ],
     )
 

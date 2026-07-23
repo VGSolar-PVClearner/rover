@@ -53,7 +53,7 @@
 | PE0.PE1 | UART8_RX.UART8_TX | **2** | 超声波 1 | MCU `UART8` 对应 `SERIAL4` | FMU_UART8_TX.FMU_UART8_RX | `SERIAL4_PROTOCOL=9`<br/>`SERIAL4_BAUD=9`<br/>`SERIAL4_OPTIONS=0`<br/>`RNGFND1_TYPE=45` | 修改用途：启用原预留 UART8 |
 |  | 小计 | **16** | **共 8 个 MCU 串口、16 个 TX/RX 引脚** |  |  |  |  |
 | **ADC** |  |  |  |  |  |  |  |
-| PC0√ | ADC123_INP10 | **1** | 气压 | 吸附压力模拟量 | BP_PRESSURE | 自定义压力模块使用 ADC pin `10`；暂无标准 Mission Planner 参数 | 否 |
+| PC0√ | ADC123_INP10 | **1** | 气压 | MCP-H10-P 3.3V 吸附负压模拟量，0.1V=0kPa、1.6V=-50kPa、3.1V=-100kPa | BP_PRESSURE | `SPRESS_PIN=10`；Status 查看 `press_abs2`（hPa）、`SUCT_PKPA`/`SUCT_HLT` | 否 |
 | PC1√ | ADC123_INP11 | **1** | 温度 | 模拟温度输入 | BP_TEMPERATURE | 自定义温度模块使用 ADC pin `11`；暂无标准 Mission Planner 参数 | 否 |
 | PA4 | ADC12_INP18 | **1** | 电流采集 | 主电池电流 | FMU_BAT1_I | `BATT_CURR_PIN=18`<br/>`BATT_AMP_PERVLT=<实测标定>`<br/>`BATT_AMP_OFFSET=<实测标定>` | 否 |
 | PC4 | ADC12_INP4 | **1** | 电压采集 | 主电池电压 | FMU_BAT1_V | `BATT_VOLT_PIN=4`<br/>`BATT_VOLT_MULT=<实测标定>` | 否 |
