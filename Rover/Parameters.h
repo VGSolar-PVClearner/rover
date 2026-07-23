@@ -15,6 +15,7 @@
 #include "AP_Torqeedo/AP_Torqeedo.h"
 #include <AP_WindVane/AP_WindVane.h>
 #include <AP_SuctionCup/AP_SuctionCup.h>
+#include <AP_SuctionPressure/AP_SuctionPressure.h>
 
 #define AP_PARAM_VEHICLE_NAME rover
 
@@ -445,6 +446,7 @@ public:
     class ModeCircle mode_circle;
 
     AP_SuctionCup suction_cup;
+    AP_SuctionPressure suction_pressure;
 };
 
 extern const AP_Param::Info var_info[];

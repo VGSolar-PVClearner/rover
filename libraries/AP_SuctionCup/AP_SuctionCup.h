@@ -25,7 +25,7 @@
  *
  * 升降到位：SCUP_IR_PIN>=0 时用槽型光电 GPIO（默认 98）。
  *   放下：缓速中可记「见过铁片」，PWM 到位后再等消失；抬起：见铁片后再等 LIFT_DLY_MS（且 PWM 到位）。
- *   PIN=-1 时：PWM 到位后再等 LIFT_DLY_MS。红外超时用 LIFT_TOUT_MS。
+ *   PIN=-1 时：PWM 到位后再等 LIFT_DLY_MS。红外超时用 LIFT_TO_MS。
  * 红外传感实现：AP_SuctionCup_IR.cpp（库内拆分，非独立 AP_ 库）。
  *
  * 地面站参数前缀 SCUP_*；实例挂在 Rover ParametersG2::suction_cup。
@@ -112,6 +112,9 @@ private:
     AP_Int8  _ir_pol;
     AP_Int16 _ir_deb_ms;
     AP_Int16 _lift_timeout_ms;
+    AP_Float _vacuum_pressure_kpa;
+    AP_Int16 _vacuum_debounce_ms;
+    AP_Float _vacuum_hysteresis_kpa;
 
     bool _active;
     bool _frozen;
@@ -141,6 +144,9 @@ private:
     State _last_logged_state;
     Phase _last_logged_phase;
     uint32_t _last_log_ms;
+    uint32_t _vacuum_ok_start_ms;
+    uint32_t _vacuum_loss_start_ms;
+    bool _vacuum_loss_warned;
 
     bool can_start_sequence() const;
     void begin_lower();
@@ -170,6 +176,7 @@ private:
     void update_lowering(uint32_t now);
     void update_raising(uint32_t now);
     void check_action_timeout(uint32_t now);
+    void check_vacuum_loss(uint32_t now);
 
     void log_status(bool force = false);
 };

@@ -11,7 +11,21 @@ void Rover::init_ardupilot()
     notify.init();
     notify_mode(control_mode);
 
+#ifdef HAL_SUCTION_PRESSURE_PIN
+    bool pressure_calibration_migrated = false;
+    enum ap_var_type batt2_curr_pin_type;
+    AP_Param *batt2_curr_pin_param = AP_Param::find("BATT2_CURR_PIN", &batt2_curr_pin_type);
+    if (batt2_curr_pin_param != nullptr && batt2_curr_pin_type == AP_PARAM_INT8) {
+        AP_Int8 *batt2_curr_pin = static_cast<AP_Int8 *>(batt2_curr_pin_param);
+        if (batt2_curr_pin->get() == HAL_SUCTION_PRESSURE_PIN) {
+            batt2_curr_pin->set_and_save(-1);
+        }
+    }
+    pressure_calibration_migrated = g2.suction_pressure.migrate_legacy_calibration();
+#endif
+
     battery.init();
+    g2.suction_pressure.init();
 
 #if AP_RPM_ENABLED
     // Initialise RPM sensor
@@ -29,6 +43,12 @@ void Rover::init_ardupilot()
 
     // setup telem slots with serial ports
     gcs().setup_uarts();
+
+#ifdef HAL_SUCTION_PRESSURE_PIN
+    if (pressure_calibration_migrated) {
+        GCS_SEND_TEXT(MAV_SEVERITY_NOTICE, "MCP-H10 pressure calibration migrated");
+    }
+#endif
 
     companion_computer.init();  // CC_ENABLE=1 时打开 SerialProtocol_2CC 串口
 

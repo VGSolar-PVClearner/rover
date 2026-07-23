@@ -710,6 +710,10 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @Path: ../libraries/AP_SuctionCup/AP_SuctionCup.cpp
     AP_SUBGROUPINFO(suction_cup, "SCUP_", 59, ParametersG2, AP_SuctionCup),
 
+    // @Group: SPRESS_
+    // @Path: ../libraries/AP_SuctionPressure/AP_SuctionPressure.cpp
+    AP_SUBGROUPINFO(suction_pressure, "SPRESS_", 60, ParametersG2, AP_SuctionPressure),
+
     AP_GROUPEND
 };
 

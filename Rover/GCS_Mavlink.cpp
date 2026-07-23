@@ -433,10 +433,36 @@ bool GCS_Rover::vehicle_initialised() const
     return rover.control_mode != &rover.mode_initializing;
 }
 
+#ifdef HAL_SUCTION_PRESSURE_PIN
+void GCS_MAVLINK_Rover::send_suction_pressure2() const
+{
+    float press_abs_hpa = NAN;
+    float pressure_kpa;
+    if (AP::suction_pressure().get_pressure_kpa(pressure_kpa)) {
+        press_abs_hpa = pressure_kpa * 10.0f;
+    }
+
+    mavlink_msg_scaled_pressure2_send(
+        chan,
+        AP_HAL::millis(),
+        press_abs_hpa,
+        0.0f,
+        0,
+        0);
+}
+#endif
+
 // try to send a message, return false if it won't fit in the serial tx buffer
 bool GCS_MAVLINK_Rover::try_send_message(enum ap_message id)
 {
     switch (id) {
+
+#ifdef HAL_SUCTION_PRESSURE_PIN
+    case MSG_SCALED_PRESSURE2:
+        CHECK_PAYLOAD_SIZE(SCALED_PRESSURE2);
+        send_suction_pressure2();
+        break;
+#endif
 
     case MSG_SERVO_OUT:
         CHECK_PAYLOAD_SIZE(RC_CHANNELS_SCALED);
