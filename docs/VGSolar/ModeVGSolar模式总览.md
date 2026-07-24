@@ -13,7 +13,7 @@
 | 使能 | 地面站 `VGS_ENABLE=1`，且飞行模式切到 VGSolar |
 | 职责 | 消费 NCU 指令，驱动履带运动、转弯吸盘序列、滚刷、状态上报 |
 
-**不负责**：MAVLink 主控链路（调试仍可用）；吸盘/滚刷底层时序分别在 `AP_SuctionCup` / `AP_Brush`。
+**不负责**：MAVLink 主控链路（调试仍可用）；吸盘/滚刷底层时序分别在 `AP_SuctionCup` / `AP_Brush`；2BLD6010 RS485 遥测由独立的 `AP_ESC_Telem_2BLD6010` 后端运行，不属于模式状态机。
 
 ---
 
@@ -39,6 +39,9 @@ ModeVGSolar::update()         ← 主循环
 
 10Hz：publish_status_feedback → companion send_data（0xBB 0x01）
       导航中另发 0xBB 0x04
+
+独立 100Hz 调度：AP_ESC_Telem_2BLD6010::update()
+      └─ SERIAL8 / protocol 51 轮询 1~4 台电调并发布标准 ESC 遥测
 ```
 
 **NCU 指令优先级**（同周期内）：
@@ -120,13 +123,24 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 
 ---
 
-## 八、地面站参数
+## 八、电调控制与遥测边界
 
-数值与推荐配置统一见 [地面站参数配置.md](./地面站参数配置.md)（`VGS_*`、`SCUP_*`、`CC_*`、SERVO/Relay/SERIAL）。
+- 左右履带和前后滚刷的控制输出仍由 `SERVOx_FUNCTION` 对应的 PWM 通道完成。
+- `AP_ESC_Telem_2BLD6010` 仅发送 Modbus `0x03` 读请求，读取故障码、电流、转速、温度、电压、方向和霍尔计数，不写电调寄存器。
+- 电调遥测是否健康目前不参与 `ModeVGSolar` 的停车、转弯、导航或急停决策。
+- 设备原始故障码目前只进入 `BESC` 日志和诊断接口，不会自动映射为 NCU 状态帧 bit0~bit3。
+
+参数和遥测查看方法见 [地面站参数配置.md](./地面站参数配置.md)。
 
 ---
 
-## 九、相关源码
+## 九、地面站参数
+
+数值与推荐配置统一见 [地面站参数配置.md](./地面站参数配置.md)（`VGS_*`、`SCUP_*`、`CC_*`、`BESC_*`、SERVO/Relay/SERIAL）。
+
+---
+
+## 十、相关源码
 
 | 路径 | 内容 |
 |------|------|
@@ -135,10 +149,12 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 | `libraries/AP_CompanionComputer/` | NCU 协议栈 |
 | `libraries/AP_SuctionCup/` | 吸盘 |
 | `libraries/AP_Brush/` | 滚刷 |
+| `libraries/AP_ESC_Telem/AP_ESC_Telem_2BLD6010.cpp` | 2BLD6010 轮询、健康状态和日志 |
+| `libraries/AP_ESC_Telem/AP_ESC_Telem_2BLD6010_Protocol.cpp` | Modbus 请求、流式解析和参数校验 |
 
 ---
 
-## 十、文档索引
+## 十一、文档索引
 
 | 文档 | 内容 |
 |------|------|
@@ -146,4 +162,5 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 | [吸盘行为说明.md](./吸盘行为说明.md) | 吸附/释放、freeze、故障 |
 | [地面站参数配置.md](./地面站参数配置.md) | Mission Planner 参数清单 |
 | [STM32H743VIT6的IO资源分配.md](./STM32H743VIT6的IO资源分配.md) | 硬件引脚与通道 |
+| [AP_ESC_2BLD6010_开发过程.md](./AP_ESC_2BLD6010_开发过程.md) | 电调遥测后端设计与实现记录 |
 | `libraries/AP_SuctionCup/README.md` | 吸盘库实现级规格 |
