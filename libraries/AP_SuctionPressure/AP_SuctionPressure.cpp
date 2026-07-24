@@ -264,7 +264,6 @@ bool AP_SuctionPressure::get_pressure_kpa(float &pressure_kpa) const
 
 bool AP_SuctionPressure::get_voltage_v(float &voltage_v) const
 {
-    gcs().send_named_float(SUCT_VOLT_V, _voltage_v);
     // 与压力接口保持一致，仅发布健康且未过期的采样值。
     if (!healthy()) {
         return false;
