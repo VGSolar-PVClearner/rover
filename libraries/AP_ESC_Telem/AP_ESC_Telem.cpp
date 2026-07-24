@@ -235,6 +235,48 @@ bool AP_ESC_Telem::get_raw_rpm(uint8_t esc_index, float& rpm) const
     return true;
 }
 
+// 汇总读取单台电调的标准遥测，各字段通过独立有效标志表示是否可用。
+bool AP_ESC_Telem::get_esc_data(uint8_t esc_index, ESCData &data) const
+{
+    data = {};
+    if (esc_index >= ESC_TELEM_MAX_ESCS) {
+        return false;
+    }
+
+    data.rpm_valid = get_rpm(esc_index, data.rpm);
+    data.voltage_valid = get_voltage(esc_index, data.voltage);
+    data.current_valid = get_current(esc_index, data.current);
+    data.temperature_valid = get_temperature(esc_index, data.temperature_cdeg);
+    data.last_update_ms = get_last_telem_data_ms(esc_index);
+
+    return data.rpm_valid || data.voltage_valid || data.current_valid || data.temperature_valid;
+}
+
+// 批量读取连续电调槽位；单个实例无效不会中断其他实例，返回位掩码对应输出数组下标。
+uint32_t AP_ESC_Telem::get_esc_data(uint8_t first_esc_index, ESCData *data, uint8_t count) const
+{
+    if (data == nullptr || count == 0) {
+        return 0;
+    }
+
+    for (uint8_t i = 0; i < count; i++) {
+        data[i] = {};
+    }
+
+    if (first_esc_index >= ESC_TELEM_MAX_ESCS) {
+        return 0;
+    }
+
+    const uint8_t readable_count = MIN(count, uint8_t(ESC_TELEM_MAX_ESCS - first_esc_index));
+    uint32_t valid_mask = 0;
+    for (uint8_t i = 0; i < readable_count; i++) {
+        if (get_esc_data(first_esc_index + i, data[i])) {
+            valid_mask |= 1U << i;
+        }
+    }
+    return valid_mask;
+}
+
 // get an individual ESC's temperature in centi-degrees if available, returns true on success
 bool AP_ESC_Telem::get_temperature(uint8_t esc_index, int16_t& temp) const
 {

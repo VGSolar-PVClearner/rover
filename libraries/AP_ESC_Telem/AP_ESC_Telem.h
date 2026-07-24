@@ -19,6 +19,18 @@ class AP_ESC_Telem {
 public:
     friend class AP_ESC_Telem_Backend;
 
+    struct ESCData {
+        float rpm;
+        float voltage;
+        float current;
+        int16_t temperature_cdeg;
+        uint32_t last_update_ms;
+        bool rpm_valid;
+        bool voltage_valid;
+        bool current_valid;
+        bool temperature_valid;
+    };
+
     AP_ESC_Telem();
 
     /* Do not allow copies */
@@ -33,6 +45,12 @@ public:
 
     // get an individual ESC's raw rpm if available
     bool get_raw_rpm(uint8_t esc_index, float& rpm) const;
+
+    // get the standard telemetry fields available for an individual ESC
+    bool get_esc_data(uint8_t esc_index, ESCData &data) const;
+
+    // get standard telemetry for a consecutive group of ESCs, returning a relative valid-instance mask
+    uint32_t get_esc_data(uint8_t first_esc_index, ESCData *data, uint8_t count) const;
 
     // get raw telemetry data, used by IOMCU
     const volatile AP_ESC_Telem_Backend::TelemetryData& get_telem_data(uint8_t esc_index) const {

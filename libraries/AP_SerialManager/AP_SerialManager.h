@@ -87,6 +87,7 @@ public:
         SerialProtocol_PPP = 48,
         SerialProtocol_IBUS_Telem = 49,                // i-BUS telemetry data, ie via sensor port of FS-iA6B
         SerialProtocol_2CC = 50,
+        SerialProtocol_ESC_2BLD6010 = 51,
         SerialProtocol_NumProtocols                    // must be the last value
     };
 

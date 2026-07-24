@@ -49,6 +49,7 @@
 #include "AP_ExternalControl_Rover.h"
 #endif
 #include <AP_CompanionComputer/AP_CompanionComputer.h>
+#include <AP_ESC_Telem/AP_ESC_Telem_config.h>
 
 // Configuration
 #include "defines.h"
