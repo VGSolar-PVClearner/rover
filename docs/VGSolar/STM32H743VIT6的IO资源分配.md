@@ -1,7 +1,7 @@
 # STM32H743VIT6 / VGSolar IO 资源分配
 
-> **软件接入说明（2026-07-18 更新）**  
-> 下表记录 MCU 物理引脚、定时器、PWM/GPIO 和网络标签，属于硬件资源基线。`PWM(n)`/`GPIO(n)` 是 hwdef 资源编号，`SERVOx_FUNCTION` 是 ArduPilot 逻辑输出配置，三者不能互相直接推断。串口名称均优先表示 MCU 外设，例如“串口6”表示 `USART6`，不等于 ArduPilot 参数组 `SERIAL6`。本次先更新 IO 分配文档；实际 `libraries/AP_HAL_ChibiOS/hwdef/VGSolar/hwdef.dat`、参数文件和实机接线仍须后续同步与验证。
+> **软件接入说明（2026-07-24 更新）**
+> 下表记录 MCU 物理引脚、定时器、PWM/GPIO 和网络标签，属于硬件资源基线。`PWM(n)`/`GPIO(n)` 是 hwdef 资源编号，`SERVOx_FUNCTION` 是 ArduPilot 逻辑输出配置，三者不能互相直接推断。串口名称均优先表示 MCU 外设，例如“串口6”表示 `USART6`，不等于 ArduPilot 参数组 `SERIAL6`。当前映射已与 `libraries/AP_HAL_ChibiOS/hwdef/VGSolar/hwdef.dat` 对照；实机线序、电平和 RS485 收发器方向方式仍须台架确认。
 
 ## 当前软件映射摘要
 
@@ -20,7 +20,7 @@
 | 超声波 2 | MCU `USART2`，对应 `SERIAL5_PROTOCOL=9` | USART2 从遥控器改为超声波 | `PA2/PA3`；DYP-A02 时使用 `SERIAL5_BAUD=9` |
 | RK3588 通信 | MCU `USART3`，对应 `SERIAL6_PROTOCOL=50`、`SERIAL6_BAUD=115` | `AP_CompanionComputer` 已实现 | `PB10/PB11`；`CC_PORT` 选择第 N 个协议 50 串口 |
 | GPS | MCU `USART6`，对应 `SERIAL7_PROTOCOL=5` | 目标分配已确认 | `PC6/PC7`；`SERIAL7_BAUD` 按 GPS 型号确认 |
-| RS485 电调遥测 | MCU `UART4`，对应 `SERIAL8_PROTOCOL=51`、`SERIAL8_BAUD=115` | `AP_2BLD6010` 已实现 | `PC10/PC11`；自动方向收发器使用 `SERIAL8_OPTIONS=0` |
+| RS485 电调遥测 | MCU `UART4`，对应 `SERIAL8_PROTOCOL=51`、`SERIAL8_BAUD=115` | `AP_ESC_Telem_2BLD6010` 已实现 | `PC10/PC11`；只读 Modbus RTU，自动方向收发器使用 `SERIAL8_OPTIONS=0` |
 | CAN1 | `PD0/PD1 FDCAN1` | 恢复为预留 CAN 总线 | 本次两路超声波使用 UART8 和 USART2，不占用 CAN1 |
 | 关机保持 | `PE2 MCU_K/GPIO99` | 软件关机 `0x04` 未实现 | 必须先确认高/低有效、ACK 后延时和断电保持逻辑 |
 | 物理急停 | `PE3 KILL/GPIO100` | 尚未接入 VGSL | NCU 急停已实现，但不能替代物理急停验收 |

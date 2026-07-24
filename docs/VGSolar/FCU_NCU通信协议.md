@@ -252,6 +252,8 @@
 
 **通信超时豁免（实现）**：TURN 执行中且未冻结、或 NAV 执行中，可不判 bit7，以满足单次长指令。
 
+**2BLD6010 遥测边界**：当前 `AP_ESC_Telem_2BLD6010` 是独立只读监控后端。它读取的设备故障码、RPM、电压、电流和温度尚未写入本协议的状态反馈；bit0~bit3 也不会因 `BESC` 日志中的 `Fault` 非零而自动置位。若后续要求 NCU 接收电调遥测或将电调故障接入安全策略，必须先定义新的协议字段/指令或明确现有 fault bit 的映射规则，再同步修改飞控与本文档。
+
 ---
 
 ## 七、协作时序（摘要）
@@ -307,5 +309,6 @@ NCU: 0x03 写 0x0103=0 → 关刷
 | 指令消费 / 转弯 / 安全 | `Rover/mode_vgsolar.cpp` |
 | 滚刷 | `libraries/AP_Brush/` |
 | 吸盘 | `libraries/AP_SuctionCup/` |
+| 2BLD6010 电调遥测（不进入当前 NCU 帧） | `libraries/AP_ESC_Telem/AP_ESC_Telem_2BLD6010.cpp` |
 
 串口协议号：**50**（Companion Computer）。改协议字段时须同步改 `AP_CompanionComputer_config.h` 与本文档。
