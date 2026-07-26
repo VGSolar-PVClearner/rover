@@ -104,6 +104,10 @@ public:
         _new_cmd_flags &= ~(1<<3);
     }
 
+    // 丢弃未消费的速度/转弯/导航指令（保留急停等系统控制）
+    // 进/出 VGSL 时调用，避免 Manual 期间堆积的旧速度在重进模式时突然生效
+    void clear_pending_motion_commands();
+
     // 急停锁存；parse_system_ctrl 置位，Mode 层执行停车/关刷/吸盘
     bool is_estop_active() const
     {

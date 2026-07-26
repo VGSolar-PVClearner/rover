@@ -153,24 +153,37 @@ void AP_CompanionComputer::process_received_data(uint8_t oneByte)
         // 整帧长度 = DATA_LENGTH + 7（含帧头、校验和、结束符 0xFF）
         if (_rx_count >= (_data_len + 7)) {
             if (validate_packet()) {
+                // 长度与协议表一致才分发，降低串口噪声被误解析成速度指令的概率
                 switch (_cmd_type) {
                 case NCU_CMD_SPEED_CTRL:
-                    parse_speed_ctrl();
+                    if (_data_len == NCU_DATA_LEN_SPEED_CTRL) {
+                        parse_speed_ctrl();
+                    }
                     break;
                 case NCU_CMD_TURN:
-                    parse_turn();
+                    if (_data_len == NCU_DATA_LEN_TURN) {
+                        parse_turn();
+                    }
                     break;
                 case NCU_CMD_PARAM_WRITE:
-                    parse_param_write();
+                    if (_data_len == NCU_DATA_LEN_PARAM_WRITE) {
+                        parse_param_write();
+                    }
                     break;
                 case NCU_CMD_PARAM_READ:
-                    parse_param_read();
+                    if (_data_len == NCU_DATA_LEN_PARAM_READ) {
+                        parse_param_read();
+                    }
                     break;
                 case NCU_CMD_SYSTEM_CTRL:
-                    parse_system_ctrl();
+                    if (_data_len == NCU_DATA_LEN_SYSTEM_CTRL) {
+                        parse_system_ctrl();
+                    }
                     break;
                 case NCU_CMD_POSITION:
-                    parse_position();
+                    if (_data_len == NCU_DATA_LEN_POSITION) {
+                        parse_position();
+                    }
                     break;
                 default:
                     break;
@@ -474,6 +487,15 @@ void AP_CompanionComputer::reset_mode_status()
     _fb_fault_bits = 0;
     _fb_mode_status_valid = false;
     _nav_status_send = false;
+}
+
+void AP_CompanionComputer::clear_pending_motion_commands()
+{
+    // bit0=SPEED bit1=TURN bit2=POSITION；bit3=SYSTEM（急停）保留
+    _new_cmd_flags &= ~uint8_t((1 << 0) | (1 << 1) | (1 << 2));
+    _latest_speed_ctrl = {};
+    _latest_turn = {};
+    _latest_position = {};
 }
 
 // bit8 低电压：置位后 motion_state 可能为 0x05（FAULT_MOTION_MASK 含 FAULT_LOW_VOLTAGE）

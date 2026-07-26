@@ -104,8 +104,8 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 
 | 时机 | 行为 |
 |------|------|
-| `_enter()` | 要求 `VGS_ENABLE`；`clear_fault()`；激活吸盘/滚刷库；子模式待机 |
-| `_exit()` | 吸盘紧急释放并去激活；滚刷停并去激活 |
+| `_enter()` | 要求 `VGS_ENABLE`；`clear_fault()`；激活吸盘/滚刷库；子模式待机；**丢弃未消费的 NCU 速度/转弯/导航**（避免 Manual 切回后突然跟旧指令） |
+| `_exit()` | 停车；吸盘紧急释放并去激活；滚刷停并去激活；丢弃未消费运动指令 |
 | 未解锁 | 可进入 VGSL，但滚刷/阀/泵/吸盘强制安全位；`lower()` 拒绝；运动类指令受限 |
 | 中途 disarm | 同安全位，并中止 TURN/NAV 类动作 |
 
@@ -116,7 +116,8 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 | 触发 | 动作 |
 |------|------|
 | 已吸附且 \|roll\|/\|pitch\| 过大（约 >30°） | 停车 + `freeze` 吸盘 + bit9；转弯则 `_turn_frozen` |
-| NCU ≈200 ms 无合法帧 | 停车、关刷、bit7；已吸附或转弯中则 freeze（TURN/NAV 执行中可豁免判超时） |
+| NCU ≈200 ms 无合法帧 | 停车、关刷、清零速度目标、bit7；已吸附或转弯中则 freeze（TURN/NAV 执行中可豁免判超时） |
+| 解锁边沿 | 丢弃上锁期间堆积的 NCU 运动指令并清零速度目标，避免一解锁就跟旧速度 |
 | 急停 | 停车、关刷、吸盘完整释放；`motion_state=0x04` |
 
 **恢复**：倾角回限和/或 NCU 恢复后 → 中止当前运动任务 → `unfreeze` → 若仍吸附则 `raise` → 回待机。急停期间不自动恢复。

@@ -128,12 +128,16 @@ bool ModeVGSolar::_enter()
     _vg_submode = VGSubMode::STANDBY;
     _turn_phase = TurnPhase::IDLE;
     _target_speed_ms = 0.0f;
+    _target_yaw_rate_cds = 0;
     _last_ncu_cmd_ms = 0;
     _fault_flags = 0;
     clear_safety_hold_mask();
     _nav_phase = NavPhase::CRUISE;
     // 记录 NED 全局原点，供后续 NED 导航换算经纬度
     capture_ned_origin();
+
+    // 其它模式期间 UART 仍会解析 NCU；丢弃堆积的运动指令，避免重进后突然跟旧速度
+    rover.companion_computer.clear_pending_motion_commands();
 
     // 外设激活：滚刷/吸盘仅在 VGSL 内输出；未 soft_armed 时库内仍强制安全位
     rover.companion_computer.stop_brushes();
@@ -153,11 +157,14 @@ void ModeVGSolar::_exit()
     _vg_submode = VGSubMode::STANDBY;
     _turn_phase = TurnPhase::IDLE;
     _turn_frozen = false;
+    _target_speed_ms = 0.0f;
+    _target_yaw_rate_cds = 0;
 
     AP::suction_cup().emergency_release();
     AP::suction_cup().set_active(false);
     rover.companion_computer.stop_brushes();
     AP::brush().set_active(false);
+    rover.companion_computer.clear_pending_motion_commands();
     rover.companion_computer.reset_mode_status();
 
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: exited");
@@ -180,17 +187,23 @@ void ModeVGSolar::update()
         sync_suction_fault_flags();
         read_companion_commands();  // 仅急停等系统指令生效；运动指令在函数内拒绝
         apply_disarmed_actuator_safety();
-        stop_vehicle();
+        // 未解锁时不要跑 stop_vehicle() 速度环：编码器噪声会把刹车 I 项顶成反转，
+        // 一解锁电机真正出力就会往后拱一下。
+        clear_speed_motion_state();
         if (_vg_submode == VGSubMode::ESTOP) {
             update_estop();
-        } else {
-            update_standby();
         }
         return;
     }
 
     if (!_actuators_were_armed) {
+        // 解锁边沿：丢弃上锁期间串口堆积的运动指令，避免一解锁就跟旧速度
         _actuators_were_armed = true;
+        rover.companion_computer.clear_pending_motion_commands();
+        clear_speed_motion_state();
+        if (_vg_submode == VGSubMode::YAW || _vg_submode == VGSubMode::YAWRATE) {
+            _vg_submode = VGSubMode::STANDBY;
+        }
         gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: armed, actuators enabled");
     }
 
@@ -258,12 +271,15 @@ void ModeVGSolar::apply_disarmed_actuator_safety()
         _turn_frozen = false;
         _vg_submode = VGSubMode::STANDBY;
         clear_safety_hold_mask();
+        clear_speed_motion_state();
     } else if (_vg_submode == VGSubMode::NAV) {
         cancel_navigation();
     } else if (_vg_submode == VGSubMode::YAW || _vg_submode == VGSubMode::YAWRATE) {
         _vg_submode = VGSubMode::STANDBY;
-        _target_speed_ms = 0.0f;
+        clear_speed_motion_state();
     }
+
+    rover.companion_computer.clear_pending_motion_commands();
 
     const uint32_t now = AP_HAL::millis();
     if (disarm_edge ||
@@ -272,6 +288,19 @@ void ModeVGSolar::apply_disarmed_actuator_safety()
         _last_disarmed_actuator_gcs_ms = now;
         gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: disarmed, actuators safe");
     }
+}
+
+void ModeVGSolar::clear_speed_motion_state()
+{
+    _target_speed_ms = 0.0f;
+    _target_yaw_rate_cds = 0;
+    _desired_speed = 0.0f;
+    have_attitude_target = false;
+    start_stop();
+    // 速度环 I 项停车时必须清掉，否则仍可能往前走
+    attitude_control.relax_I();
+    g2.motors.set_throttle(0.0f);
+    g2.motors.set_steering(0.0f);
 }
 
 // NCU 状态上报（Rover.cpp 10Hz：publish_* → companion_computer.send_data/send_nav_data）
@@ -587,6 +616,10 @@ void ModeVGSolar::read_companion_commands()
 // 子模式执行：待机 / 航向角 / 偏航速率 / 导航
 void ModeVGSolar::update_standby()
 {
+    // 待机：强制清速度环并停车，避免 YAWRATE 残留 I 项在超时切回来后继续加油门
+    if (!is_zero(_target_speed_ms) || !is_zero(_desired_speed) || have_attitude_target) {
+        clear_speed_motion_state();
+    }
     stop_vehicle();
 }
 
@@ -724,10 +757,12 @@ void ModeVGSolar::abort_turn_suction_fault()
 
 void ModeVGSolar::complete_turn()
 {
-    _vg_submode = _submode_before_turn;
+    // 回待机并清零旧速度；不再恢复转弯前的 YAWRATE 目标（避免突然前冲）
+    _vg_submode = VGSubMode::STANDBY;
     _turn_phase = TurnPhase::IDLE;
     _turn_frozen = false;
-    gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN complete, restored");
+    clear_speed_motion_state();
+    gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN complete, standby");
 }
 
 // 安全保持：倾角过大 / NCU 通信超时 → freeze 吸盘，条件满足后自动恢复
@@ -794,6 +829,7 @@ void ModeVGSolar::abort_motion_for_safety_recovery()
     case VGSubMode::YAW:
     case VGSubMode::YAWRATE:
         _vg_submode = VGSubMode::STANDBY;
+        clear_speed_motion_state();
         break;
     default:
         break;
@@ -1003,7 +1039,7 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::RAISE_SUCTION: {
-        // 异步 raise；is_raised() 后 complete_turn() 恢复 _submode_before_turn
+        // 异步 raise；is_raised() 后 complete_turn() 回待机
         if (!scup.is_busy() && !scup.is_raised()) {
             if (scup.is_lowered() || scup.is_frozen()) {
                 if (!scup.raise()) {
@@ -1087,6 +1123,7 @@ void ModeVGSolar::check_ncu_timeout()
 
     default:
         gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: NCU timeout, auto stop");
+        clear_speed_motion_state();
         stop_vehicle();
         _vg_submode = VGSubMode::STANDBY;
         _turn_phase = TurnPhase::IDLE;

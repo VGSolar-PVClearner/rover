@@ -1345,6 +1345,8 @@ private:
     void set_brush_control(uint8_t brush_id, bool turn_on);
     // 未解锁：停刷、吸盘释放/安全位，中止 TURN/NAV/YAW 运动
     void apply_disarmed_actuator_safety();
+    // 清零速度/偏航率目标并切 ModeGuided 到 Stop，避免旧目标残留
+    void clear_speed_motion_state();
     void capture_ned_origin();
     bool nav_position_reached() const;
     void complete_nav_arrived();
