@@ -598,16 +598,16 @@ void AP_CompanionComputer::send_data()
     // FCU → NCU 状态反馈帧 0xBB 0x01
     StatusFeedbackData status_data {};
     const AP_AHRS &ahrs = AP::ahrs();
-    // const AP_BattMonitor &battery = AP::battery();
+    const AP_BattMonitor &battery = AP::battery();
 
-    // // 电池电量 (%)
-    // uint8_t percentage = 0;
-    // if (battery.capacity_remaining_pct(percentage, 1)) {
-    //     status_data.battery_percent = percentage;
-    // }
+    // 电池电量 (%)
+    uint8_t percentage = 0;
+    if (battery.capacity_remaining_pct(percentage, 0)) {
+        status_data.battery_percent = percentage;
+    }
 
     // 暂固定为100
-    status_data.battery_percent = 100;
+    // status_data.battery_percent = 100;
 
     // 经纬度 (度 × 1e7)
     Location loc;
