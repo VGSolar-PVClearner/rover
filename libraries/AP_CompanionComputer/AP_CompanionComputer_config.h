@@ -309,6 +309,31 @@ constexpr uint32_t PACKET_TIMEOUT_MS        = 200;
 // 非零速度后无新速度帧超过此时长则停车（丢控兜底，不置 fault bit7）
 constexpr uint32_t NCU_HEARTBEAT_TIMEOUT_MS = 200;
 
+// DataFlash NCU 通信日志（见 docs/VGSolar/NCU通信日志设计.md）
+namespace NCULog {
+constexpr uint8_t REJECT_NONE          = 0;
+constexpr uint8_t REJECT_DISARMED      = 1;
+constexpr uint8_t REJECT_ESTOP         = 2;
+constexpr uint8_t REJECT_SUCTION_BUSY  = 3;
+constexpr uint8_t REJECT_SAFETY_HOLD   = 4;
+constexpr uint8_t REJECT_NAV_ACTIVE    = 5;
+constexpr uint8_t REJECT_SUCTION_FAULT = 6;
+
+constexpr uint8_t EVT_TIMEOUT     = 1;
+constexpr uint8_t EVT_ENTER_VGSL  = 2;
+constexpr uint8_t EVT_EXIT_VGSL   = 3;
+constexpr uint8_t EVT_ARM_CLEAR   = 4;
+constexpr uint8_t EVT_DISARM      = 5;
+
+constexpr uint8_t TURN_ACTION_CMD   = 1;
+constexpr uint8_t TURN_ACTION_PHASE = 2;
+constexpr uint8_t TURN_ACTION_DONE  = 3;
+constexpr uint8_t TURN_ACTION_ABORT = 4;
+
+constexpr uint32_t NSPD_MIN_INTERVAL_MS = 200;  // CC_LOG=1 时最短记录间隔
+constexpr uint32_t NCLK_INTERVAL_MS     = 1000;
+}
+
 // 数据体结构体
 #pragma pack(push, 1)
 
