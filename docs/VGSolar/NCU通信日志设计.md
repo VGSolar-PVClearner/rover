@@ -79,8 +79,8 @@
 |----------|------|------|
 | TimeUS | uint64 | 时间（µs） |
 | VelMode | uint8 | 1=航向角 yaw，2=角速度 yawrate |
-| LinVel | int16 | 线速度，**cm/s**（与协议一致） |
-| YawData | int16 | yaw：航向 **0.01°**；yawrate：角速率 **0.01°/s** |
+| LinVel | float | 线速度，**m/s**（由协议 cm/s ×0.01） |
+| YawData | float | VelMode=1：航向 **度**；VelMode=2：角速率 **°/s**（均由协议 0.01 单位 ×0.01） |
 | Acc | uint8 | 1=Mode 已采用，0=拒绝 |
 | RRej | uint8 | 拒因，见下表；接受时为 0 |
 
@@ -116,8 +116,8 @@
 | Act | uint8 | 本条记录在干什么，见下表 |
 | TMode | uint8 | 1=原地转弯，2=行进间转弯（协议 `turn_mode`） |
 | Dir | uint8 | 1=左转，2=右转（协议 `direction`） |
-| TAng | uint16 | 目标相对转角，**0.01°**（协议单位） |
-| AVel | uint16 | 角速度上限，**0.01°/s**（协议单位） |
+| TAng | float | 目标相对转角，**度**（由协议 0.01° ×0.01） |
+| AVel | float | 角速度上限，**°/s**（由协议 0.01°/s ×0.01） |
 | Phase | uint8 | 当前/进入的转弯阶段，见下表；拒绝时可为 0 |
 | Acc | uint8 | 1=接受或进行中事件，0=本条为拒绝指令 |
 | RRej | uint8 | 拒因（同上表）；非拒绝为 0 |
@@ -204,14 +204,3 @@
 3. 转弯异常：只看 **NTRN**——指令是否接受、`Phase` 卡在哪、是 `Done` 还是 `Abort`。  
 
 ---
-
-## 十、修订记录
-
-| 日期 | 说明 |
-|------|------|
-| 2026-07-26 | 初稿定稿：`NCLK` / `NSPD` / `NEVT`；丢帧字段为 `DropPeriodic` / `DropEvent` |
-| 2026-07-26 | 调整「原则 / 后续可扩展」表述，聚焦本设计消息 |
-| 2026-07-30 | 增加专用 `NTRN`；转弯从 `NEVT` 拆出 |
-| 2026-07-30 | 落地实现：`CC_LOG`；`Drop*` 累计；`SinceRx` 无包=`UINT32_MAX` |
-| 2026-07-31 | ESTOP 拒因日志；NSPD 降频含 Acc/RRej；NEVT 超时 Param1=`SinceRx` |
-| 2026-08-01 | 缩短 BIN 列名以符合 `LS_LABELS_SIZE`(65)，修复 SITL `Log structure invalid` |

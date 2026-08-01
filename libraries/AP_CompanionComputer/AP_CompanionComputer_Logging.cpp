@@ -90,7 +90,8 @@ void AP_CompanionComputer::maybe_write_nclk()
     _bad_length_sec = 0;
 }
 
-// Mode 在接受/拒绝速度后调用。CC_LOG=1：速度或接受/拒因变化立刻记，未变则最短间隔 200ms；=2：每条都记
+// Mode 在接受/拒绝速度后调用（入参仍为协议单位；写入 BIN 时换算成常用单位）。
+// CC_LOG=1：速度或接受/拒因变化立刻记，未变则最短间隔 200ms；=2：每条都记
 void AP_CompanionComputer::log_nspd(uint8_t vel_mode, int16_t lin_vel_cms, int16_t yaw_data,
                                    uint8_t accepted, uint8_t reject_reason)
 {
@@ -112,14 +113,20 @@ void AP_CompanionComputer::log_nspd(uint8_t vel_mode, int16_t lin_vel_cms, int16
     }
 
 #if HAL_LOGGING_ENABLED
+    // 协议 cm/s、0.01°(/s) → m/s、度(/s)
+    const float lin_vel_ms = lin_vel_cms * 0.01f;
+    const float yaw_human = yaw_data * 0.01f;
+
     AP::logger().WriteStreaming(
         "NSPD",
         "TimeUS,VelMode,LinVel,YawData,Acc,RRej",
-        "QBhhBB",
+        "s#-n?--",
+        "F-00---",
+        "QBffBB",
         AP_HAL::micros64(),
         vel_mode,
-        lin_vel_cms,
-        yaw_data,
+        lin_vel_ms,
+        yaw_human,
         accepted,
         reject_reason);
 #endif
@@ -134,6 +141,7 @@ void AP_CompanionComputer::log_nspd(uint8_t vel_mode, int16_t lin_vel_cms, int16
 }
 
 // Mode 转弯事件：Cmd / Phase / Done / Abort（见 NCULog::TURN_ACTION_*）
+// 入参为协议 0.01°(/s)；BIN 写入度 / °/s
 void AP_CompanionComputer::log_ntrn(uint8_t action, uint8_t turn_mode, uint8_t direction,
                                    uint16_t target_angle_cd, uint16_t ang_vel_cds,
                                    uint8_t phase, uint8_t accepted, uint8_t reject_reason)
@@ -143,16 +151,21 @@ void AP_CompanionComputer::log_ntrn(uint8_t action, uint8_t turn_mode, uint8_t d
     }
 
 #if HAL_LOGGING_ENABLED
+    const float target_angle_deg = target_angle_cd * 0.01f;
+    const float ang_vel_dps = ang_vel_cds * 0.01f;
+
     AP::logger().WriteStreaming(
         "NTRN",
         "TimeUS,Act,TMode,Dir,TAng,AVel,Phase,Acc,RRej",
-        "QBBBHHBBB",
+        "s---dk---",
+        "F---00---",
+        "QBBBffBBB",
         AP_HAL::micros64(),
         action,
         turn_mode,
         direction,
-        target_angle_cd,
-        ang_vel_cds,
+        target_angle_deg,
+        ang_vel_dps,
         phase,
         accepted,
         reject_reason);

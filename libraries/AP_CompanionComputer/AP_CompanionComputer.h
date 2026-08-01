@@ -126,10 +126,10 @@ public:
     uint8_t log_level() const;
     uint32_t since_rx_ms() const;
     void log_nspd(uint8_t vel_mode, int16_t lin_vel_cms, int16_t yaw_data,
-                  uint8_t accepted, uint8_t reject_reason);
+                  uint8_t accepted, uint8_t reject_reason);  // 入参协议单位；BIN 为 m/s、度(/s)
     void log_ntrn(uint8_t action, uint8_t turn_mode, uint8_t direction,
                   uint16_t target_angle_cd, uint16_t ang_vel_cds,
-                  uint8_t phase, uint8_t accepted, uint8_t reject_reason);
+                  uint8_t phase, uint8_t accepted, uint8_t reject_reason);  // 入参 0.01°(/s)；BIN 为度、°/s
     void log_nevt(uint8_t event_id, int32_t param1 = 0, int32_t param2 = 0);
 
     static const struct AP_Param::GroupInfo var_info[];
