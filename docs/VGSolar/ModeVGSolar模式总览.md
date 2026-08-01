@@ -30,7 +30,7 @@ ModeVGSolar::update()         ← 主循环
   ├─ 未解锁 → 外设安全位，中止 TURN/NAV
   ├─ 已解锁 → suction_cup.update()
   ├─ read_companion_commands()  指令优先级见下
-  ├─ 倾角 / NCU 心跳 / 安全恢复
+  ├─ 倾角 / 运动丢控看门狗 / 安全恢复
   └─ 按 VGSubMode 执行 YAW / YAWRATE / TURN / NAV / ESTOP
         │
         ├─► ModeGuided（航向/角速度/航点）
@@ -116,7 +116,7 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 | 触发 | 动作 |
 |------|------|
 | 已吸附且 \|roll\|/\|pitch\| 过大（约 >30°） | 停车 + `freeze` 吸盘 + bit9；转弯则 `_turn_frozen` |
-| NCU ≈200 ms 无合法帧 | 停车、关刷、清零速度目标、bit7；已吸附或转弯中则 freeze（TURN/NAV 执行中可豁免判超时） |
+| 非零速度后 ≈200 ms 无新速度帧 | 停车、关刷、清零速度目标；已吸附则 freeze；**不置 bit7**（零速/待机静默正常；TURN/NAV 不启看门狗） |
 | 解锁边沿 | 丢弃上锁期间堆积的 NCU 运动指令并清零速度目标，避免一解锁就跟旧速度 |
 | 急停 | 停车、关刷、吸盘完整释放；`motion_state=0x04` |
 

@@ -104,6 +104,7 @@ ModeVGSolar::ModeVGSolar(void) :
     _last_ncu_cmd_ms(0),
     _turn_phase_start_ms(0),
     _turn_frozen(false),
+    _await_ncu_after_lost_motion(false),
     _safety_hold_mask(0),
     _last_turn_pwm_gcs_ms(0),
     _last_turn_gcs_phase(TurnPhase::IDLE),
@@ -130,6 +131,7 @@ bool ModeVGSolar::_enter()
     _target_speed_ms = 0.0f;
     _target_yaw_rate_cds = 0;
     _last_ncu_cmd_ms = 0;
+    _await_ncu_after_lost_motion = false;
     _fault_flags = 0;
     clear_safety_hold_mask();
     _nav_phase = NavPhase::CRUISE;
@@ -389,7 +391,7 @@ void ModeVGSolar::publish_nav_status_feedback()
     rover.companion_computer.set_nav_status(data, send_nav);
 }
 
-// NCU 指令消费（从 AP_CompanionComputer 缓存读取，置 _last_ncu_cmd_ms 刷新心跳）
+// NCU 指令消费；仅非零速度帧打开运动看门狗（_last_ncu_cmd_ms），不置 bit7
 // 优先级：系统控制 > 转弯 > 导航 > 速度控制
 void ModeVGSolar::read_companion_commands()
 {
@@ -398,8 +400,9 @@ void ModeVGSolar::read_companion_commands()
     if (cc.is_new_system_ctrl()) {
         cc.clear_new_system_flag();
         const SystemCtrlData &cmd = cc.get_latest_system_ctrl();
-        _last_ncu_cmd_ms = AP_HAL::millis();
-        _fault_flags &= ~FAULT_COMM_TIMEOUT;
+        _last_ncu_cmd_ms = 0;  // 系统控制关闭运动看门狗
+        _await_ncu_after_lost_motion = false;
+        _fault_flags &= ~FAULT_COMM_TIMEOUT;  // 清除历史残留 bit7
 
         switch (cmd.command) {
         case SYS_CMD_ESTOP:
@@ -447,7 +450,8 @@ void ModeVGSolar::read_companion_commands()
             return;
         }
         const TurnData &cmd = cc.get_latest_turn();
-        _last_ncu_cmd_ms = AP_HAL::millis();
+        _last_ncu_cmd_ms = 0;  // TURN 豁免看门狗
+        _await_ncu_after_lost_motion = false;
         start_turn(cmd);
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
         return;
@@ -456,7 +460,8 @@ void ModeVGSolar::read_companion_commands()
     if (cc.is_new_position()) {
         cc.clear_new_position_flag();
         const PositionData &cmd = cc.get_latest_position();
-        _last_ncu_cmd_ms = AP_HAL::millis();
+        _last_ncu_cmd_ms = 0;  // NAV 豁免看门狗
+        _await_ncu_after_lost_motion = false;
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
 
         if (cmd.nav_mode == NAV_MODE_CANCEL) {
@@ -574,10 +579,11 @@ void ModeVGSolar::read_companion_commands()
             return;
         }
         const SpeedCtrlData &cmd = cc.get_latest_speed_ctrl();
-        _last_ncu_cmd_ms = AP_HAL::millis();
+        _await_ncu_after_lost_motion = false;
         _fault_flags &= ~FAULT_COMM_TIMEOUT;
 
         if (_vg_submode == VGSubMode::NAV) {
+            _last_ncu_cmd_ms = 0;
             return;
         }
 
@@ -588,15 +594,30 @@ void ModeVGSolar::read_companion_commands()
 
         // 转弯冻结：NCU 恢复通信后走统一安全恢复（倾角仍超限则继续等待）
         if (_vg_submode == VGSubMode::TURN && _turn_frozen) {
+            _last_ncu_cmd_ms = 0;
             try_recover_safety_hold();
             return;
         }
 
-        // 其它安全保持期间只刷新通信心跳，不切换控制子模式
+        // 其它安全保持期间不跟速度、不打开看门狗
         if (_safety_hold_mask != 0) {
+            _last_ncu_cmd_ms = 0;
             return;
         }
 
+        // 零速：正常停车，关闭看门狗（静默不再判丢控）
+        const bool yawrate_idle = (cmd.control_mode == SPEED_MODE_YAWRATE) &&
+                                  (cmd.yaw_data == 0);
+        const bool yaw_idle = (cmd.control_mode == SPEED_MODE_YAW);
+        if (cmd.velocity == 0 && (yawrate_idle || yaw_idle)) {
+            clear_speed_motion_state();
+            _vg_submode = VGSubMode::STANDBY;
+            _last_ncu_cmd_ms = 0;
+            return;
+        }
+
+        // 非零运动：打开 200ms 丢控看门狗
+        _last_ncu_cmd_ms = AP_HAL::millis();
         _target_speed_ms = cmd.velocity * 0.01f;
 
         if (cmd.control_mode == SPEED_MODE_YAW) {
@@ -765,7 +786,7 @@ void ModeVGSolar::complete_turn()
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN complete, standby");
 }
 
-// 安全保持：倾角过大 / NCU 通信超时 → freeze 吸盘，条件满足后自动恢复
+// 安全保持：倾角过大 / 运动丢控（已吸附）→ freeze 吸盘，条件满足后自动恢复
 void ModeVGSolar::check_tilt_safety()
 {
     // |roll|/|pitch|>30° 且已吸附：freeze 吸盘；bit9 由 collect_sensor_faults 上报
@@ -851,7 +872,7 @@ void ModeVGSolar::release_safety_hold_suction()
 
 void ModeVGSolar::try_recover_safety_hold()
 {
-    // TILT：倾角回限；NCU_COMM：bit7 清除；ESTOP 期间不自动恢复
+    // TILT：倾角回限；NCU_COMM：需再收到 NCU 指令（_await_ncu_after_lost_motion 已清）；ESTOP 不自动恢复
     if (_safety_hold_mask == 0) {
         return;
     }
@@ -869,7 +890,7 @@ void ModeVGSolar::try_recover_safety_hold()
     }
 
     if ((_safety_hold_mask & SAFETY_HOLD_NCU_COMM) != 0 &&
-        (_fault_flags & FAULT_COMM_TIMEOUT) != 0) {
+        _await_ncu_after_lost_motion) {
         return;
     }
 
@@ -1067,7 +1088,7 @@ void ModeVGSolar::update_turn()
     send_turn_pwm_gcs();
 }
 
-// 导航取消与 NCU 心跳超时（200ms，参数帧不刷新 _last_ncu_cmd_ms）
+// 导航取消与运动丢控看门狗（仅非零速度后 200ms 无新速度帧则停车，不置 bit7）
 void ModeVGSolar::cancel_navigation()
 {
     stop_vehicle();
@@ -1080,11 +1101,12 @@ void ModeVGSolar::cancel_navigation()
 
 void ModeVGSolar::check_ncu_timeout()
 {
+    // 看门狗未打开（待机/零速/系统控制/TURN/NAV 等）
     if (_last_ncu_cmd_ms == 0) {
         return;
     }
 
-    // 转弯/导航执行期豁免 NCU 心跳（协议为单次长指令）；TURN 仅 _turn_frozen 后再判超时
+    // 转弯/导航执行期豁免（协议为单次长指令）
     if ((_vg_submode == VGSubMode::TURN && !_turn_frozen) ||
         _vg_submode == VGSubMode::NAV) {
         return;
@@ -1095,44 +1117,21 @@ void ModeVGSolar::check_ncu_timeout()
         return;
     }
 
-    _fault_flags |= FAULT_COMM_TIMEOUT;
+    // 运动中丢控：停车关刷，不上报 FAULT_COMM_TIMEOUT
+    _last_ncu_cmd_ms = 0;
     rover.companion_computer.stop_brushes();
+    gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: motion cmd lost, auto stop");
 
-    switch (_vg_submode) {
-    case VGSubMode::TURN:
-        stop_vehicle();
+    clear_speed_motion_state();
+    stop_vehicle();
+    _vg_submode = VGSubMode::STANDBY;
+    _turn_phase = TurnPhase::IDLE;
+    _turn_frozen = false;
+
+    if (AP::suction_cup().is_lowered()) {
+        _await_ncu_after_lost_motion = true;
         enter_safety_hold(SAFETY_HOLD_NCU_COMM);
         AP::suction_cup().freeze();
-        _turn_frozen = true;
-        return;
-
-    case VGSubMode::NAV:
-    case VGSubMode::ESTOP:
-        stop_vehicle();
-        enter_safety_hold(SAFETY_HOLD_NCU_COMM);
-        AP::suction_cup().freeze();
-        return;
-
-    case VGSubMode::STANDBY:
-        stop_vehicle();
-        if (AP::suction_cup().is_lowered()) {
-            enter_safety_hold(SAFETY_HOLD_NCU_COMM);
-            AP::suction_cup().freeze();
-        }
-        return;
-
-    default:
-        gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: NCU timeout, auto stop");
-        clear_speed_motion_state();
-        stop_vehicle();
-        _vg_submode = VGSubMode::STANDBY;
-        _turn_phase = TurnPhase::IDLE;
-        _turn_frozen = false;
-        if (AP::suction_cup().is_lowered()) {
-            enter_safety_hold(SAFETY_HOLD_NCU_COMM);
-            AP::suction_cup().freeze();
-        }
-        break;
     }
 }
 

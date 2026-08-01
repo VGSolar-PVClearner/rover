@@ -544,7 +544,7 @@ uint8_t AP_CompanionComputer::compute_motion_state(int16_t velocity_cms, bool es
     constexpr uint16_t FAULT_MOTION_MASK =
         FAULT_IMU | FAULT_LOW_VOLTAGE | FAULT_LEFT_MOTOR | FAULT_RIGHT_MOTOR |
         FAULT_NAV_FAILED | FAULT_TILT |
-        FAULT_SUCTION_CUP | FAULT_COMM_TIMEOUT;
+        FAULT_SUCTION_CUP;
 
     if ((fault_code & FAULT_MOTION_MASK) != 0) {
         return uint8_t(MotionState::FAULT);

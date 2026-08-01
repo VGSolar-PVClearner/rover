@@ -20,7 +20,7 @@
 |------|------|----------------|
 | **control_mode** | 当前控制模式 | 整个 TURN 子模式期间 = **`0x03`** |
 | **motion_state** | 实际运动状态 | **仅已吸附且未抬起、非冻结** = **`0x03`** |
-| **fault_code** | 故障位 | bit4 吸盘 / bit7 NCU 超时 / bit9 倾角 等 |
+| **fault_code** | 故障位 | bit4 吸盘 / bit9 倾角 等（bit7 通信超时不再置位） |
 
 **control_mode 与 motion_state 不同步是正常的**：前者表示「在执行转弯任务」，后者表示「处于协议定义的差速转弯段」。
 
@@ -110,7 +110,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 | 位 | 触发 | 解除条件 |
 |----|------|----------|
 | `SAFETY_HOLD_TILT` | 已吸附且 \|roll\|/\|pitch\|>30° | 倾角回限 |
-| `SAFETY_HOLD_NCU_COMM` | NCU 200ms 无帧（bit7） | 收到 NCU 帧，bit7 清除 |
+| `SAFETY_HOLD_NCU_COMM` | 运动丢控超时且已吸附（不置 bit7） | 再收到 NCU 指令 |
 
 可叠加；**ESTOP 期间不自动恢复**。
 
@@ -119,12 +119,9 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 | 场景 | 动作 |
 |------|------|
 | 倾角过大（已吸附） | `stop_vehicle()` + `enter_safety_hold(TILT)` + `freeze()`；TURN 时 `_turn_frozen=true` |
-| NCU 超时 | `stop_vehicle()` + 关刷 + bit7 + `enter_safety_hold(NCU)` + `freeze()`（已吸附或 TURN 冻结） |
+| 运动丢控 | `stop_vehicle()` + 关刷 +（已吸附时）`enter_safety_hold(NCU)` + `freeze()`；**不置 bit7** |
 
-**NCU 超时豁免**（协议单次长指令）：
-
-- TURN 执行中且 **未** `_turn_frozen` → 不判超时
-- NAV 执行中 → 不判超时
+**运动看门狗**：仅非零速度帧启动；零速/系统控制/TURN/NAV 不启动。静默不报通信故障。
 
 ### 5.3 恢复 `try_recover_safety_hold()`
 
@@ -136,8 +133,8 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 | 恢复途径 | 说明 |
 |----------|------|
-| 自动 | 倾角回限和/或 NCU 通信恢复 |
-| 速度帧 | TURN 且 `_turn_frozen` 时，速度帧刷新心跳并尝试恢复（倾角仍超限则继续等） |
+| 自动 | 倾角回限；运动丢控 hold 需再收到 NCU 指令 |
+| 速度帧 | TURN 且 `_turn_frozen` 时尝试恢复（倾角仍超限则继续等） |
 | 解除急停 | `SYS_CMD_ESTOP_CLEAR` 后调用 `try_recover_safety_hold()` |
 
 **安全保持期间**：速度帧仅刷新心跳；**NAV/YAW/YAWRATE 不再执行 motion update**（仅 `stop_vehicle` / STANDBY）；TURN 走 `_turn_frozen` 路径。
@@ -204,7 +201,7 @@ VG_SOLAR TURN out: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u
 ## 八、motion_state 计算优先级
 
 `compute_motion_state()`：故障 mask → 急停 → turning → 前进/后退/静止。  
-bit7/bit9 在 mask 中时 motion_state 为 **0x05**，而非 0x03。
+bit9 等在 mask 中时 motion_state 为 **0x05**，而非 0x03（bit7 已移出 mask）。
 
 ---
 
@@ -266,7 +263,7 @@ RELAY2_FUNCTION = 1
 |------|------|------|------|-------|--------------|
 | 转弯 LOWERED 段 | 差速 | 按 NCU | 关泵+密封 | — | **0x03** |
 | 倾角 hold | 停 | — | freeze | bit9 | 0x05 |
-| NCU hold | 停 | 关 | freeze | bit7 | 0x05 |
+| 运动丢控 hold | 停 | 关 | freeze | — | 0x00（不置 bit7） |
 | hold 恢复 | 停→STANDBY | — | raise | 条件清 | 0x00 |
 | 急停 | 停 | 关 | release | — | 0x04 |
 | 吸盘 FAULT | 停 | — | release | bit4 | 0x05 |

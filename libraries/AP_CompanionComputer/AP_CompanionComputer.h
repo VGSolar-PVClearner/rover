@@ -168,7 +168,7 @@ private:
     uint8_t _fb_control_mode;
     bool _fb_estop;
     bool _fb_turning;
-    uint16_t _fb_fault_bits;      // bit7 超时、bit10 导航失败、bit4 吸盘等（Mode 侧）
+    uint16_t _fb_fault_bits;      // Mode 侧故障：bit4 吸盘、bit10 导航失败等（bit7 通信超时不再置位）
     bool _fb_mode_status_valid;   // 非 VGSL 或未 publish 时为 false，control_mode 回退 STANDBY
 
     NavStatusData _nav_status;    // Mode publish_nav_status_feedback() 写入
