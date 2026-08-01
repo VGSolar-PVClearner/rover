@@ -267,7 +267,7 @@ enum FaultBits : uint16_t {
     FAULT_SUCTION_CUP    = 1 << 4,
     FAULT_IMU            = 1 << 5,
     FAULT_GPS_NO_SIGNAL  = 1 << 6,
-    FAULT_COMM_TIMEOUT   = 1 << 7,
+    FAULT_COMM_TIMEOUT   = 1 << 7,  // 预留：不再置位；运动丢控仅停车不上报
     FAULT_LOW_VOLTAGE    = 1 << 8,
     FAULT_TILT           = 1 << 9,
     FAULT_NAV_FAILED     = 1 << 10,
@@ -306,6 +306,7 @@ constexpr uint8_t COMPANION_SEND_PARAM_LENGTH = FRAME_OVERHEAD + FCU_DATA_LEN_PA
 constexpr uint8_t COMPANION_SEND_NAV_LENGTH   = FRAME_OVERHEAD + FCU_DATA_LEN_NAV_STATUS;
 
 constexpr uint32_t PACKET_TIMEOUT_MS        = 200;
+// 非零速度后无新速度帧超过此时长则停车（丢控兜底，不置 fault bit7）
 constexpr uint32_t NCU_HEARTBEAT_TIMEOUT_MS = 200;
 
 // 数据体结构体
