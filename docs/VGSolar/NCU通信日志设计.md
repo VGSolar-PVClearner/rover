@@ -48,19 +48,21 @@
 
 **触发：** 约 1 Hz（建议仅 `CC_ENABLE` 且相关串口有效时）。
 
-| 字段 | 类型 | 含义 |
-|------|------|------|
-| TimeUS | uint64 | 时间（µs） |
-| SinceRxMs | uint32 | 距上一帧**合法** NCU 数据的毫秒数；从未收到合法帧时为 `UINT32_MAX` |
-| RxPerSec | uint16 | 上一秒成功解析的帧数 |
-| BadChecksum | uint16 | 上一秒校验失败次数 |
-| BadLength | uint16 | 上一秒长度不符次数 |
-| DropPeriodic | uint16 | 周期发送（如 10Hz 状态）因 TX 满丢弃的次数（**累计**） |
-| DropEvent | uint16 | 事件发送（ACK 等）因 TX 满丢弃的次数（**累计**） |
-| CtrlMode | uint8 | 当前上报 `control_mode` |
-| FaultBits | uint16 | 当前 `fault_code` |
+> BIN 列名受 DataFlash `LS_LABELS_SIZE`(65) 限制，须用短名；下表「BIN 列名」为实际日志字段。
 
-**读法：** `SinceRxMs` 经常 >200 → 易触发 NCU 超时停车；`BadChecksum`/`BadLength` 升高 → 串口噪声或帧错乱。
+| BIN 列名 | 类型 | 含义 |
+|----------|------|------|
+| TimeUS | uint64 | 时间（µs） |
+| SinceRx | uint32 | 距上一帧**合法** NCU 数据的毫秒数；从未收到合法帧时为 `UINT32_MAX` |
+| RxN | uint16 | 上一秒成功解析的帧数 |
+| BadCRC | uint16 | 上一秒校验失败次数 |
+| BadLen | uint16 | 上一秒长度不符次数 |
+| DropP | uint16 | 周期发送（如 10Hz 状态）因 TX 满丢弃的次数（**累计**） |
+| DropE | uint16 | 事件发送（ACK 等）因 TX 满丢弃的次数（**累计**） |
+| CMode | uint8 | 当前上报 `control_mode` |
+| Fault | uint16 | 当前 `fault_code` |
+
+**读法：** `SinceRx` 经常 >200 → 易触发 NCU 超时停车；`BadCRC`/`BadLen` 升高 → 串口噪声或帧错乱。
 
 ---
 
@@ -68,21 +70,21 @@
 
 **触发：**
 
-- `CC_LOG=1`：线速度/角速度/模式/**Accepted·RejectReason** 变化时记；未变化时最短间隔 200 ms（约 ≤5 Hz）
+- `CC_LOG=1`：线速度/角速度/模式/**Acc·RRej** 变化时记；未变化时最短间隔 200 ms（约 ≤5 Hz）
 - `CC_LOG=2`：Mode 每消费一条速度指令记一条（跟 NCU 约 10 Hz）
 
 在 Companion **解析成功**且 Mode **决定接受或拒绝**之后写一条（含拒因）。
 
-| 字段 | 类型 | 含义 |
-|------|------|------|
+| BIN 列名 | 类型 | 含义 |
+|----------|------|------|
 | TimeUS | uint64 | 时间（µs） |
 | VelMode | uint8 | 1=航向角 yaw，2=角速度 yawrate |
 | LinVel | int16 | 线速度，**cm/s**（与协议一致） |
 | YawData | int16 | yaw：航向 **0.01°**；yawrate：角速率 **0.01°/s** |
-| Accepted | uint8 | 1=Mode 已采用，0=拒绝 |
-| RejectReason | uint8 | 拒因，见下表；接受时为 0 |
+| Acc | uint8 | 1=Mode 已采用，0=拒绝 |
+| RRej | uint8 | 拒因，见下表；接受时为 0 |
 
-### RejectReason（`NSPD` / `NTRN` 共用）
+### RRej（`NSPD` / `NTRN` 共用拒因）
 
 | 值 | 名称 | 含义 |
 |----|------|------|
@@ -94,7 +96,7 @@
 | 5 | NavActive | 导航中拒速度（主要用于 `NSPD`） |
 | 6 | SuctionFault | 吸盘故障（主要用于 `NTRN`） |
 
-**读法：** `LinVel` 连续且 `Accepted=1`，但车仍一卡一卡 → 多半不是丢指令，应对齐 `RCOU` / 死区 / 编码器。
+**读法：** `LinVel` 连续且 `Acc=1`，但车仍一卡一卡 → 多半不是丢指令，应对齐 `RCOU` / 死区 / 编码器。
 
 ---
 
@@ -108,23 +110,23 @@
 - 转弯**阶段变化**（进入新 `TurnPhase`）  
 - 转弯正常结束 / 中止（故障、超时、安全恢复等）  
 
-| 字段 | 类型 | 含义 |
-|------|------|------|
+| BIN 列名 | 类型 | 含义 |
+|----------|------|------|
 | TimeUS | uint64 | 时间（µs） |
-| Action | uint8 | 本条记录在干什么，见下表 |
-| TurnMode | uint8 | 1=原地转弯，2=行进间转弯（协议 `turn_mode`） |
-| Direction | uint8 | 1=左转，2=右转（协议 `direction`） |
-| TargetAngle | uint16 | 目标相对转角，**0.01°**（协议单位） |
-| AngVel | uint16 | 角速度上限，**0.01°/s**（协议单位） |
+| Act | uint8 | 本条记录在干什么，见下表 |
+| TMode | uint8 | 1=原地转弯，2=行进间转弯（协议 `turn_mode`） |
+| Dir | uint8 | 1=左转，2=右转（协议 `direction`） |
+| TAng | uint16 | 目标相对转角，**0.01°**（协议单位） |
+| AVel | uint16 | 角速度上限，**0.01°/s**（协议单位） |
 | Phase | uint8 | 当前/进入的转弯阶段，见下表；拒绝时可为 0 |
-| Accepted | uint8 | 1=接受或进行中事件，0=本条为拒绝指令 |
-| RejectReason | uint8 | 拒因（同上表）；非拒绝为 0 |
+| Acc | uint8 | 1=接受或进行中事件，0=本条为拒绝指令 |
+| RRej | uint8 | 拒因（同上表）；非拒绝为 0 |
 
-### Action
+### Act
 
 | 值 | 名称 | 含义 |
 |----|------|------|
-| 1 | Cmd | 收到 NCU 转弯指令（看 `Accepted` / `RejectReason`） |
+| 1 | Cmd | 收到 NCU 转弯指令（看 `Acc` / `RRej`） |
 | 2 | Phase | 转弯阶段变化（看 `Phase`） |
 | 3 | Done | 转弯正常结束（抬盘完成回待机） |
 | 4 | Abort | 转弯中止（吸盘故障、整段超时、安全恢复打断等） |
@@ -142,8 +144,8 @@
 
 **读法示例：**
 
-- 有 `Action=1, Accepted=0, RejectReason=3` → 指令到了但吸盘忙被拒  
-- `Action=2, Phase=4` → 已进入真正差速转  
+- 有 `Act=1, Acc=0, RRej=3` → 指令到了但吸盘忙被拒  
+- `Act=2, Phase=4` → 已进入真正差速转  
 - 只有 `Phase=3` 很久没有 `4` → 卡在放吸盘（与实车 GCS 的 tph 日志可对照）  
 
 ---
@@ -163,7 +165,7 @@
 
 | 值 | 含义 | Param1 | Param2 |
 |----|------|--------|--------|
-| 1 | NCU 通信超时停车 | `SinceRxMs`（与 `NCLK.SinceRxMs` 同源；过大钳为 `INT32_MAX`） | 超时前 VG 子模式 |
+| 1 | NCU 通信超时停车 | `SinceRx`（与 `NCLK.SinceRx` 同源；过大钳为 `INT32_MAX`） | 超时前 VG 子模式 |
 | 2 | 进入 VGSL | 0 | 0 |
 | 3 | 退出 VGSL | 0 | 0 |
 | 4 | 解锁边沿并清除旧运动指令 | 0 | 0 |
@@ -176,7 +178,7 @@
 | 项 | 说明 |
 |----|------|
 | 导航专用消息（如 NNAV） | 需要时再加 |
-| 状态反馈摘要加细 | 现有 `NCLK.CtrlMode` / `FaultBits` 已可对照；若要更细再单独定字段 |
+| 状态反馈摘要加细 | 现有 `NCLK.CMode` / `Fault` 已可对照；若要更细再单独定字段 |
 
 ---
 
@@ -184,10 +186,10 @@
 
 | 位置 | 写什么 |
 |------|--------|
-| `AP_CompanionComputer` 校验失败 / 长度拒绝 | 计入 `BadChecksum` / `BadLength`（供 `NCLK`） |
+| `AP_CompanionComputer` 校验失败 / 长度拒绝 | 计入 `BadCRC` / `BadLen`（供 `NCLK`） |
 | Mode `read_companion_commands` 速度接受/拒绝 | `NSPD` |
 | `start_turn` / `set_turn_phase` / `complete_turn` / `abort_turn_*` | `NTRN` |
-| `send_frame` 丢帧计数 | `DropPeriodic` / `DropEvent`（累计写入 `NCLK`） |
+| `send_frame` 丢帧计数 | `DropP` / `DropE`（累计写入 `NCLK`） |
 | `check_ncu_timeout`（首次置位）、进退 VGSL、解锁清指令、上锁边沿 | `NEVT` |
 | `update()` 约 1 Hz | `NCLK`（实现：`AP_CompanionComputer_Logging.cpp`） |
 
@@ -197,8 +199,19 @@
 
 ## 九、排查备忘
 
-1. 直行卡顿：看 **NSPD** 是否连续且 `Accepted=1`，再对齐 **RCOU**。  
-2. 链路：看 **NCLK** `SinceRxMs`、坏包计数；**NEVT** `EventId=1` 是否超时。  
+1. 直行卡顿：看 **NSPD** 是否连续且 `Acc=1`，再对齐 **RCOU**。  
+2. 链路：看 **NCLK** `SinceRx`、坏包计数；**NEVT** `EventId=1` 是否超时。  
 3. 转弯异常：只看 **NTRN**——指令是否接受、`Phase` 卡在哪、是 `Done` 还是 `Abort`。  
 
 ---
+
+## 十、修订记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-07-26 | 初稿定稿：`NCLK` / `NSPD` / `NEVT`；丢帧字段为 `DropPeriodic` / `DropEvent` |
+| 2026-07-26 | 调整「原则 / 后续可扩展」表述，聚焦本设计消息 |
+| 2026-07-30 | 增加专用 `NTRN`；转弯从 `NEVT` 拆出 |
+| 2026-07-30 | 落地实现：`CC_LOG`；`Drop*` 累计；`SinceRx` 无包=`UINT32_MAX` |
+| 2026-07-31 | ESTOP 拒因日志；NSPD 降频含 Acc/RRej；NEVT 超时 Param1=`SinceRx` |
+| 2026-08-01 | 缩短 BIN 列名以符合 `LS_LABELS_SIZE`(65)，修复 SITL `Log structure invalid` |

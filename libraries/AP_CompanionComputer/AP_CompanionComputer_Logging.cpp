@@ -71,7 +71,7 @@ void AP_CompanionComputer::maybe_write_nclk()
 
     AP::logger().WriteStreaming(
         "NCLK",
-        "TimeUS,SinceRxMs,RxPerSec,BadChecksum,BadLength,DropPeriodic,DropEvent,CtrlMode,FaultBits",
+        "TimeUS,SinceRx,RxN,BadCRC,BadLen,DropP,DropE,CMode,Fault",
         "QIHHHHHBH",
         AP_HAL::micros64(),
         since_rx_ms(),
@@ -114,7 +114,7 @@ void AP_CompanionComputer::log_nspd(uint8_t vel_mode, int16_t lin_vel_cms, int16
 #if HAL_LOGGING_ENABLED
     AP::logger().WriteStreaming(
         "NSPD",
-        "TimeUS,VelMode,LinVel,YawData,Accepted,RejectReason",
+        "TimeUS,VelMode,LinVel,YawData,Acc,RRej",
         "QBhhBB",
         AP_HAL::micros64(),
         vel_mode,
@@ -145,7 +145,7 @@ void AP_CompanionComputer::log_ntrn(uint8_t action, uint8_t turn_mode, uint8_t d
 #if HAL_LOGGING_ENABLED
     AP::logger().WriteStreaming(
         "NTRN",
-        "TimeUS,Action,TurnMode,Direction,TargetAngle,AngVel,Phase,Accepted,RejectReason",
+        "TimeUS,Act,TMode,Dir,TAng,AVel,Phase,Acc,RRej",
         "QBBBHHBBB",
         AP_HAL::micros64(),
         action,
