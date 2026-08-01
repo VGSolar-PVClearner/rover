@@ -160,6 +160,7 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 | 文档 | 内容 |
 |------|------|
 | [FCU_NCU通信协议.md](./FCU_NCU通信协议.md) | 帧格式、指令、状态与故障位 |
+| [NCU通信日志设计.md](./NCU通信日志设计.md) | DataFlash：`NCLK`/`NSPD`/`NTRN`/`NEVT` 字段与排查用法 |
 | [吸盘行为说明.md](./吸盘行为说明.md) | 吸附/释放、freeze、故障 |
 | [地面站参数配置.md](./地面站参数配置.md) | Mission Planner 参数清单 |
 | [STM32H743VIT6的IO资源分配.md](./STM32H743VIT6的IO资源分配.md) | 硬件引脚与通道 |

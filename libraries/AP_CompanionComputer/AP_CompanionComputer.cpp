@@ -8,6 +8,7 @@
 #include <AP_Brush/AP_Brush.h>
 
 // AP_CompanionComputer 实现：串口收发、NCU 指令解析、FCU 反馈组帧。
+// DataFlash 通信日志见 AP_CompanionComputer_Logging.cpp。
 // 运动/导航/转弯/急停执行逻辑在 Rover/mode_vgsolar.cpp。
 
 const AP_Param::GroupInfo AP_CompanionComputer::var_info[] = {
@@ -25,6 +26,13 @@ const AP_Param::GroupInfo AP_CompanionComputer::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("PORT", 2, AP_CompanionComputer, _port_index, 0),
 
+    // @Param: LOG
+    // @DisplayName: NCU communication DataFlash logging
+    // @Description: 0:disabled, 1:NCLK+NSPD(change/5Hz)+NTRN+NEVT, 2:same with NSPD at up to 10Hz
+    // @Values: 0:Disabled, 1:Default, 2:VerboseSpeed
+    // @User: Advanced
+    AP_GROUPINFO("LOG", 3, AP_CompanionComputer, _log, 1),
+
     AP_GROUPEND
 };
 
@@ -35,6 +43,19 @@ AP_CompanionComputer::AP_CompanionComputer() :
     _last_sent_ms(0),
     _tx_drop_event(0),
     _tx_drop_periodic(0),
+    // NCLK 秒窗计数 / NSPD 降频状态
+    _last_rx_ok_ms(0),
+    _last_nclk_ms(0),
+    _rx_ok_sec(0),
+    _bad_checksum_sec(0),
+    _bad_length_sec(0),
+    _last_nspd_ms(0),
+    _last_nspd_vel_mode(0),
+    _last_nspd_lin_vel(0),
+    _last_nspd_yaw_data(0),
+    _last_nspd_accepted(0),
+    _last_nspd_reject_reason(0),
+    _last_nspd_valid(false),
     _new_cmd_flags(0),
     _estop_active(false),
     _fb_control_mode(0),
@@ -77,6 +98,9 @@ void AP_CompanionComputer::update()
             process_received_data(byte);
         }
     }
+
+    // CC_LOG>0 时约 1Hz 写链路健康 NCLK
+    maybe_write_nclk();
 }
 
 // 逐字节状态机；校验失败静默丢弃；合法帧按 _cmd_type 分发 parse_*
@@ -154,40 +178,39 @@ void AP_CompanionComputer::process_received_data(uint8_t oneByte)
         if (_rx_count >= (_data_len + 7)) {
             if (validate_packet()) {
                 // 长度与协议表一致才分发，降低串口噪声被误解析成速度指令的概率
-                switch (_cmd_type) {
-                case NCU_CMD_SPEED_CTRL:
-                    if (_data_len == NCU_DATA_LEN_SPEED_CTRL) {
+                // 同时累计 NCLK 的 BadLength / RxPerSec
+                const uint8_t expect_len = expected_ncu_data_len(_cmd_type);
+                if (expect_len == 0) {
+                    // 未知类型：校验已过但无法解析，不计坏长度
+                } else if (_data_len != expect_len) {
+                    note_bad_length();
+                } else {
+                    note_rx_ok();
+                    switch (_cmd_type) {
+                    case NCU_CMD_SPEED_CTRL:
                         parse_speed_ctrl();
-                    }
-                    break;
-                case NCU_CMD_TURN:
-                    if (_data_len == NCU_DATA_LEN_TURN) {
+                        break;
+                    case NCU_CMD_TURN:
                         parse_turn();
-                    }
-                    break;
-                case NCU_CMD_PARAM_WRITE:
-                    if (_data_len == NCU_DATA_LEN_PARAM_WRITE) {
+                        break;
+                    case NCU_CMD_PARAM_WRITE:
                         parse_param_write();
-                    }
-                    break;
-                case NCU_CMD_PARAM_READ:
-                    if (_data_len == NCU_DATA_LEN_PARAM_READ) {
+                        break;
+                    case NCU_CMD_PARAM_READ:
                         parse_param_read();
-                    }
-                    break;
-                case NCU_CMD_SYSTEM_CTRL:
-                    if (_data_len == NCU_DATA_LEN_SYSTEM_CTRL) {
+                        break;
+                    case NCU_CMD_SYSTEM_CTRL:
                         parse_system_ctrl();
-                    }
-                    break;
-                case NCU_CMD_POSITION:
-                    if (_data_len == NCU_DATA_LEN_POSITION) {
+                        break;
+                    case NCU_CMD_POSITION:
                         parse_position();
+                        break;
+                    default:
+                        break;
                     }
-                    break;
-                default:
-                    break;
                 }
+            } else {
+                note_bad_checksum();  // 供 NCLK.BadChecksum
             }
             _rx_state = RxState::WAITING_HEADER1;
             _rx_count = 0;
@@ -670,6 +693,27 @@ void AP_CompanionComputer::send_data()
 
     if (send_frame(packet, frame_len, TxPriority::PERIODIC)) {
         _last_sent_ms = now;
+    }
+}
+
+// 各 NCU 指令类型对应的 DATA_LENGTH；未知返回 0（供收帧长度校验）
+uint8_t AP_CompanionComputer::expected_ncu_data_len(uint8_t cmd_type)
+{
+    switch (cmd_type) {
+    case NCU_CMD_SPEED_CTRL:
+        return NCU_DATA_LEN_SPEED_CTRL;
+    case NCU_CMD_TURN:
+        return NCU_DATA_LEN_TURN;
+    case NCU_CMD_PARAM_WRITE:
+        return NCU_DATA_LEN_PARAM_WRITE;
+    case NCU_CMD_PARAM_READ:
+        return NCU_DATA_LEN_PARAM_READ;
+    case NCU_CMD_SYSTEM_CTRL:
+        return NCU_DATA_LEN_SYSTEM_CTRL;
+    case NCU_CMD_POSITION:
+        return NCU_DATA_LEN_POSITION;
+    default:
+        return 0;
     }
 }
 

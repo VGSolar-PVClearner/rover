@@ -9,6 +9,7 @@
 | 本仓库 `libraries/AP_CompanionComputer/` | 实际解析与打包实现 |
 | [吸盘行为说明.md](./吸盘行为说明.md) | 转弯内吸盘序列（无独立吸盘协议） |
 | [地面站参数配置.md](./地面站参数配置.md) | `SERIAL6` / `CC_*` 等地面站配置 |
+| [NCU通信日志设计.md](./NCU通信日志设计.md) | DataFlash 通信日志字段（`NCLK`/`NSPD`/`NTRN`/`NEVT`） |
 
 ---
 

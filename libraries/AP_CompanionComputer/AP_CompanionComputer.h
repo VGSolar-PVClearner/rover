@@ -18,6 +18,8 @@
  *                                       → send_data()     0xBB 0x01 状态反馈
  *                                       → send_nav_data() 0xBB 0x04 导航状态  （导航现在用不到）
  *
+ * DataFlash 通信日志：AP_CompanionComputer_Logging.cpp（CC_LOG）
+ *
  * 上行发送时机：
  *   事件帧 0x02/0x03 — parse_* 或 Mode 调用时立即 send_frame(EVENT)
  *   周期帧 0x01/0x04 — 10Hz 任务内 send_frame(PERIODIC)
@@ -120,6 +122,16 @@ public:
     // 主电池(instance 0)电量有效且 ≤ LOW_BATT_PCT_THRESHOLD；无有效读数时返回 false
     bool is_low_battery() const;
 
+    // DataFlash：CC_LOG>0 时写 NCLK/NSPD/NTRN/NEVT（见 NCU通信日志设计.md）
+    uint8_t log_level() const;
+    uint32_t since_rx_ms() const;
+    void log_nspd(uint8_t vel_mode, int16_t lin_vel_cms, int16_t yaw_data,
+                  uint8_t accepted, uint8_t reject_reason);  // 入参协议单位；BIN 为 m/s、度(/s)
+    void log_ntrn(uint8_t action, uint8_t turn_mode, uint8_t direction,
+                  uint16_t target_angle_cd, uint16_t ang_vel_cds,
+                  uint8_t phase, uint8_t accepted, uint8_t reject_reason);  // 入参 0.01°(/s)；BIN 为度、°/s
+    void log_nevt(uint8_t event_id, int32_t param1 = 0, int32_t param2 = 0);
+
     static const struct AP_Param::GroupInfo var_info[];
 
 private:
@@ -133,6 +145,7 @@ private:
     // Parameters
     AP_Int8 _enable;
     AP_Int8 _port_index;
+    AP_Int8 _log;  // CC_LOG：0 关 / 1 默认 / 2 速度约 10Hz
 
     AP_HAL::UARTDriver *_uart;
 
@@ -152,6 +165,21 @@ private:
     uint32_t _last_sent_ms;  // send_data 10Hz 限速
     uint16_t _tx_drop_event;
     uint16_t _tx_drop_periodic;
+
+    // NCLK 统计（秒窗计数，写 NCLK 后清零）
+    uint32_t _last_rx_ok_ms;
+    uint32_t _last_nclk_ms;
+    uint16_t _rx_ok_sec;
+    uint16_t _bad_checksum_sec;
+    uint16_t _bad_length_sec;
+    // NSPD 降频（CC_LOG=1）
+    uint32_t _last_nspd_ms;
+    uint8_t  _last_nspd_vel_mode;
+    int16_t  _last_nspd_lin_vel;
+    int16_t  _last_nspd_yaw_data;
+    uint8_t  _last_nspd_accepted;
+    uint8_t  _last_nspd_reject_reason;
+    bool     _last_nspd_valid;
 
     uint8_t _cmd_type;
     uint8_t _data_len;
@@ -207,6 +235,13 @@ private:
     uint16_t collect_sensor_faults() const;
     // 根据 fault/estop/turning/velocity 计算 motion_state；FAULT 优先于 ESTOP
     static uint8_t compute_motion_state(int16_t velocity_cms, bool estop, bool turning, uint16_t fault_code);
+
+    void note_rx_ok();            // 合法帧：刷新 _last_rx_ok_ms，累加本秒 RxPerSec
+    void note_bad_checksum();     // 校验失败：累加本秒 BadChecksum
+    void note_bad_length();       // 长度不符：累加本秒 BadLength
+    void maybe_write_nclk();      // 约 1Hz 写 NCLK，写后清零本秒计数
+    static uint8_t expected_ncu_data_len(uint8_t cmd_type);  // 协议表 DATA_LENGTH；未知返回 0
+
 };
 
 namespace AP

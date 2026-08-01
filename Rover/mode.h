@@ -1302,6 +1302,7 @@ private:
     bool _turn_frozen;  // 安全事件后暂停转弯阶段推进
     // 运动丢控触发 SAFETY_HOLD_NCU_COMM 后，需再收到 NCU 指令才允许自动恢复吸盘
     bool _await_ncu_after_lost_motion;
+    bool _turn_timeout_aborted;  // 转角超时已写 NTRN Abort，抬盘完成不再写 Done
 
     // 倾角/运动丢控触发的吸盘保持（可叠加）；try_recover_safety_hold() 统一恢复
     static constexpr uint8_t SAFETY_HOLD_TILT     = 1 << 0;
@@ -1344,6 +1345,8 @@ private:
     void sync_suction_fault_flags();
     void abort_turn_suction_fault();
     void complete_turn();
+    void set_turn_phase(TurnPhase phase);
+    void log_turn_event(uint8_t action, uint8_t accepted, uint8_t reject_reason) const;
     void send_turn_pwm_gcs(bool force = false);
     void set_brush_control(uint8_t brush_id, bool turn_on);
     // 未解锁：停刷、吸盘释放/安全位，中止 TURN/NAV/YAW 运动
