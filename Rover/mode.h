@@ -1324,6 +1324,11 @@ private:
     AP_Float _cruise_speed_default;
     AP_Float _turn_timeout;
     AP_Float _turn_max_speed;
+    AP_Int16 _rf_safe_min_cm;  // 安全带下限 cm（含）
+    AP_Int16 _rf_safe_max_cm;  // 安全带上限 cm（含）
+
+    static constexpr uint32_t RANGE_SAFE_DEBOUNCE_MS = 100;
+    uint32_t _range_unsafe_since_ms;
 
     void read_companion_commands();
     void update_standby();
@@ -1332,10 +1337,12 @@ private:
     void update_turn();
     void update_nav();
     void update_estop();
+    void enter_estop(const char *gcs_msg);
     void start_turn(const TurnData &cmd);
     void cancel_navigation();
     void check_ncu_timeout();
     void check_tilt_safety();
+    void check_rangefinder_safety();
     void try_recover_safety_hold();
     bool tilt_within_limit() const;
     void enter_safety_hold(uint8_t reason_bit);

@@ -282,6 +282,7 @@ enum FaultBits : uint16_t {
     FAULT_LOW_VOLTAGE    = 1 << 8,
     FAULT_TILT           = 1 << 9,
     FAULT_NAV_FAILED     = 1 << 10,
+    FAULT_RANGE_SAFE     = 1 << 11,  // 超声波安全带：超限或无效（LEFT_OUT/RIGHT_OUT）
 };
 
 // NCU 运行参数索引（指南定义；其余索引 TODO: 对接 AP_Param）
