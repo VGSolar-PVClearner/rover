@@ -136,20 +136,19 @@
 * byte 28              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
 * byte 29              fault_code_H        故障码 uint16 高 8 位
 * byte 30              gps_status          GPS 定位状态
-* byte 31              range_fl_L          左前超声 uint16 低 8 位, cm；无效 0xFFFF
-* byte 32              range_fl_H
-* byte 33              range_fr_L          右前超声波 uint16 低 8 位, cm；无效 0xFFFF
-* byte 34              range_fr_H
-* byte 35              range_rl_L          左后超声波 uint16 低 8 位, cm；无效 0xFFFF
-* byte 36              range_rl_H
-* byte 37              range_rr_L          右后超声波 uint16 低 8 位, cm；无效 0xFFFF
-* byte 38              range_rr_H
+* byte 31              range_left_out_L    左外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
+* byte 32              range_left_out_H
+* byte 33              range_left_in_L     左内：拷贝 LEFT_OUT
+* byte 34              range_left_in_H
+* byte 35              range_right_in_L    右内：拷贝 RIGHT_OUT
+* byte 36              range_right_in_H
+* byte 37              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
+* byte 38              range_right_out_H
 * byte 39              Checksum
 * byte 40              end sign            0xFF
 *
-* 超声波 ORIENT 约定（RNGFNDx_ORIENT）：
-*   FL=ROTATION_YAW_315(7)  FR=ROTATION_YAW_45(1)
-*   RL=ROTATION_YAW_225(5)  RR=ROTATION_YAW_135(3)
+* 四路均在车头；仅 LEFT_OUT / RIGHT_OUT 接串口传感器。
+* ORIENT：LEFT_OUT=ROTATION_YAW_315(7)  RIGHT_OUT=ROTATION_YAW_45(1)
 *
 * --- 0x02 指令应答 (FCU_FB_CMD_ACK, DATA_LENGTH = 0x02, 整帧 0x09 字节) ---
 * byte 5               cmd_type            对应的 NCU 指令类型
@@ -405,10 +404,10 @@ struct StatusFeedbackData {
     uint8_t  motion_state;     // MotionState；由 compute_motion_state() 计算
     uint16_t fault_code;       // _fb_fault_bits | collect_sensor_faults()
     uint8_t  gps_status;       // 0~3，经 map_gps_status_to_protocol 映射
-    uint16_t range_fl_cm;      // 左前 cm；无效 RANGE_INVALID_CM
-    uint16_t range_fr_cm;      // 右前
-    uint16_t range_rl_cm;      // 左后
-    uint16_t range_rr_cm;      // 右后
+    uint16_t range_left_out_cm;   // 左外 cm（真传感器）；无效 RANGE_INVALID_CM
+    uint16_t range_left_in_cm;    // 左内：拷贝 left_out
+    uint16_t range_right_in_cm;   // 右内：拷贝 right_out
+    uint16_t range_right_out_cm;  // 右外 cm（真传感器）
 };
 static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
               "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");

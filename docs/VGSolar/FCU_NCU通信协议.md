@@ -185,16 +185,18 @@
 | 运动状态 | uint8 | 见 5.1.2 |
 | 故障码 | uint16 | 见第六节 |
 | GPS 状态 | uint8 | `0` 无 / `1` 2D / `2` 3D / `3` RTK |
-| 左前距离 FL | uint16 | cm；无效 **`0xFFFF`** |
-| 右前距离 FR | uint16 | cm；无效 **`0xFFFF`** |
-| 左后距离 RL | uint16 | cm；无效 **`0xFFFF`** |
-| 右后距离 RR | uint16 | cm；无效 **`0xFFFF`** |
+| 左外距离 LEFT_OUT | uint16 | cm；接传感器；无效 **`0xFFFF`** |
+| 左内距离 LEFT_IN | uint16 | cm；当前拷贝 LEFT_OUT |
+| 右内距离 RIGHT_IN | uint16 | cm；当前拷贝 RIGHT_OUT |
+| 右外距离 RIGHT_OUT | uint16 | cm；接传感器；无效 **`0xFFFF`** |
 
 **超声波约定**：
 
-- 上报 `RangeFinder` 状态为 Good 时的真实距离（cm）；未配置/超时/非 Good → `0xFFFF`。
-- 不在此帧用 DYP「10～50 cm 安全带」过滤读数；安全带留给 FCU/NCU 各自策略。
-- 地面站 `RNGFNDx_ORIENT` 建议：FL=`7`(YAW_315)、FR=`1`(YAW_45)、RL=`5`(YAW_225)、RR=`3`(YAW_135)。
+- 四路均在车头；顺序 `LEFT_OUT → LEFT_IN → RIGHT_IN → RIGHT_OUT`。
+- 板载仅两路串口：LEFT_OUT / RIGHT_OUT 读 `RangeFinder`（Good 时为真实 cm）；LEFT_IN / RIGHT_IN 同侧拷贝。
+- 未配置/超时/非 Good → 对应侧为 `0xFFFF`（内侧一并拷贝）。
+- 不在此帧用 DYP「10～50 cm 安全带」过滤读数。
+- 地面站 `RNGFNDx_ORIENT`：LEFT_OUT=`7`(YAW_315)、RIGHT_OUT=`1`(YAW_45)。
 
 #### 5.1.1 控制模式 `control_mode`
 
