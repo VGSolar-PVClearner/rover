@@ -109,7 +109,7 @@
 * byte 3               command content     见下表
 * byte 4               DATA_LENGTH         见下表
 *
-* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x1A) ---
+* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x22) ---
 * byte 5               battery_percent     电池电量 0~100 %
 * byte 6               longitude8          经度 int32 低 8 位 (×1e7)
 * byte 7               longitude16         经度 int32 8~15 位
@@ -136,8 +136,20 @@
 * byte 28              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
 * byte 29              fault_code_H        故障码 uint16 高 8 位
 * byte 30              gps_status          GPS 定位状态
-* byte 31              Checksum
-* byte 32              end sign            0xFF
+* byte 31              range_fl_L          左前超声 uint16 低 8 位, cm；无效 0xFFFF
+* byte 32              range_fl_H
+* byte 33              range_fr_L          右前超声波 uint16 低 8 位, cm；无效 0xFFFF
+* byte 34              range_fr_H
+* byte 35              range_rl_L          左后超声波 uint16 低 8 位, cm；无效 0xFFFF
+* byte 36              range_rl_H
+* byte 37              range_rr_L          右后超声波 uint16 低 8 位, cm；无效 0xFFFF
+* byte 38              range_rr_H
+* byte 39              Checksum
+* byte 40              end sign            0xFF
+*
+* 超声波 ORIENT 约定（RNGFNDx_ORIENT）：
+*   FL=ROTATION_YAW_315(7)  FR=ROTATION_YAW_45(1)
+*   RL=ROTATION_YAW_225(5)  RR=ROTATION_YAW_135(3)
 *
 * --- 0x02 指令应答 (FCU_FB_CMD_ACK, DATA_LENGTH = 0x02, 整帧 0x09 字节) ---
 * byte 5               cmd_type            对应的 NCU 指令类型
@@ -293,7 +305,8 @@ constexpr uint8_t NCU_DATA_LEN_POSITION     = 15;
 constexpr uint8_t NCU_RX_MAX_DATA_LEN  = NCU_DATA_LEN_POSITION;
 constexpr uint8_t COMPANION_RECV_TOTAL_LENGTH = FRAME_OVERHEAD + NCU_RX_MAX_DATA_LEN;
 
-constexpr uint8_t FCU_DATA_LEN_STATUS      = 26;
+constexpr uint8_t FCU_DATA_LEN_STATUS      = 34;  // 原 26 + 4×uint16 超声波 cm
+constexpr uint16_t RANGE_INVALID_CM        = 0xFFFF;  // 测距无效/无传感器
 constexpr uint8_t FCU_DATA_LEN_CMD_ACK     = 2;
 constexpr uint8_t FCU_DATA_LEN_PARAM       = 7;
 constexpr uint8_t FCU_DATA_LEN_NAV_STATUS  = 8;  // nav_state+coord_mode+dist32+heading_err
@@ -392,7 +405,13 @@ struct StatusFeedbackData {
     uint8_t  motion_state;     // MotionState；由 compute_motion_state() 计算
     uint16_t fault_code;       // _fb_fault_bits | collect_sensor_faults()
     uint8_t  gps_status;       // 0~3，经 map_gps_status_to_protocol 映射
+    uint16_t range_fl_cm;      // 左前 cm；无效 RANGE_INVALID_CM
+    uint16_t range_fr_cm;      // 右前
+    uint16_t range_rl_cm;      // 左后
+    uint16_t range_rr_cm;      // 右后
 };
+static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
+              "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");
 
 // FCU 0x02 指令应答数据体（2 字节）
 struct CmdAckData {

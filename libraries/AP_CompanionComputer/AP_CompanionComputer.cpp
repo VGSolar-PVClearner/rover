@@ -4,6 +4,8 @@
 #include <AP_BattMonitor/AP_BattMonitor.h>
 #include <AP_GPS/AP_GPS.h>
 #include <AP_WheelEncoder/AP_WheelEncoder.h>
+#include <AP_RangeFinder/AP_RangeFinder.h>
+#include <AP_RangeFinder/AP_RangeFinder_config.h>
 #include <AP_Math/AP_Math.h>
 #include <AP_Brush/AP_Brush.h>
 
@@ -606,6 +608,21 @@ static uint8_t map_gps_status_to_protocol(AP_GPS::GPS_Status status)
     }
 }
 
+#if AP_RANGEFINDER_ENABLED
+// 按 RNGFNDx_ORIENT 取距离；无实例或非 Good → RANGE_INVALID_CM
+static uint16_t range_cm_for_orient(enum Rotation orientation)
+{
+    const RangeFinder *rfnd = RangeFinder::get_singleton();
+    if (rfnd == nullptr || !rfnd->has_orientation(orientation)) {
+        return RANGE_INVALID_CM;
+    }
+    if (rfnd->status_orient(orientation) != RangeFinder::Status::Good) {
+        return RANGE_INVALID_CM;
+    }
+    return rfnd->distance_cm_orient(orientation);
+}
+#endif
+
 // 10Hz 状态反馈 0xBB 0x01；须在 VGSL 下先 publish_status_feedback() 再调用
 void AP_CompanionComputer::send_data()
 {
@@ -680,6 +697,19 @@ void AP_CompanionComputer::send_data()
 #if AP_GPS_ENABLED
     // 映射到 protocol 0~3，不可直接传 AP_GPS::status() 枚举
     status_data.gps_status = map_gps_status_to_protocol(AP::gps().status());
+#endif
+
+    // 四路超声波 cm：FL/FR/RL/RR；无效 0xFFFF（不套用 DYP 10~50 安全带）
+#if AP_RANGEFINDER_ENABLED
+    status_data.range_fl_cm = range_cm_for_orient(ROTATION_YAW_315);
+    status_data.range_fr_cm = range_cm_for_orient(ROTATION_YAW_45);
+    status_data.range_rl_cm = range_cm_for_orient(ROTATION_YAW_225);
+    status_data.range_rr_cm = range_cm_for_orient(ROTATION_YAW_135);
+#else
+    status_data.range_fl_cm = RANGE_INVALID_CM;
+    status_data.range_fr_cm = RANGE_INVALID_CM;
+    status_data.range_rl_cm = RANGE_INVALID_CM;
+    status_data.range_rr_cm = RANGE_INVALID_CM;
 #endif
 
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];
