@@ -168,7 +168,7 @@ SERIAL8_OPTIONS  0
 
 > 编号说明：MCU `UART7` 对应 ArduPilot `SERIAL1`，MCU `UART8` 对应 `SERIAL4`，MCU `USART2` 对应 `SERIAL5`，MCU `USART6` 对应 `SERIAL7`，MCU `UART4` 对应 `SERIAL8`。不得仅凭硬件串口名称直接填写同号的 `SERIALx_*` 参数。
 
-> 超声波说明：两路串口超声波分别使用 `PE1/PE0 UART8` 和 `PA2/PA3 USART2`。如果均为 DYP-A02，应配置两个 Rangefinder 串口实例，并分别设置 `RNGFND1_TYPE=45`、`RNGFND2_TYPE=45`、安装方向、最小距离和最大距离。`PD0/PD1 FDCAN1` 恢复为预留 CAN 总线。
+> 超声波说明：两路串口超声波分别使用 `PE1/PE0 UART8`（`SERIAL4`）和 `PA2/PA3 USART2`（`SERIAL5`）。DYP-A02：`PROTOCOL=9`、`BAUD=9`、`RNGFNDx_TYPE=45`，ORIENT 见 [地面站参数配置.md](./地面站参数配置.md)。`PD0/PD1 FDCAN1` 恢复为预留 CAN 总线。
 
 6. ADC 按资源分配改为 4 路
 ```text
