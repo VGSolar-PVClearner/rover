@@ -2,6 +2,7 @@
 #include <AP_Math/AP_Math.h>
 #include <AP_Brush/AP_Brush.h>
 #include <AP_SuctionCup/AP_SuctionCup.h>
+#include <AP_RangeFinder/AP_RangeFinder.h>
 #include <climits>
 
 #if MODE_VGSOLAR_ENABLED
@@ -25,6 +26,7 @@
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
  * 安全：倾角>30° 或 NCU 200ms 无帧 → freeze 吸盘 + safety_hold；条件恢复后 raise
  *       未解锁 → 滚刷/气泵/气阀/吸盘强制安全位，禁止运动类 NCU 指令
+ *       LEFT_OUT/RIGHT_OUT 超 VGS_RF_MIN~MAX 或无效 → ESTOP（需 NCU 解除）
  *
  */
 
@@ -74,6 +76,22 @@ const AP_Param::GroupInfo ModeVGSolar::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("TURN_SPD", 6, ModeVGSolar, _turn_max_speed, 0.3f),
 
+    // @Param: RF_MIN
+    // @DisplayName: VG Solar rangefinder safe min
+    // @Description: Inclusive safe-band lower limit (cm) for LEFT_OUT/RIGHT_OUT; outside or invalid triggers ESTOP
+    // @Range: 1 450
+    // @Units: cm
+    // @User: Standard
+    AP_GROUPINFO("RF_MIN", 7, ModeVGSolar, _rf_safe_min_cm, 5),
+
+    // @Param: RF_MAX
+    // @DisplayName: VG Solar rangefinder safe max
+    // @Description: Inclusive safe-band upper limit (cm) for LEFT_OUT/RIGHT_OUT
+    // @Range: 1 450
+    // @Units: cm
+    // @User: Standard
+    AP_GROUPINFO("RF_MAX", 8, ModeVGSolar, _rf_safe_max_cm, 15),
+
     AP_GROUPEND
 };
 
@@ -111,7 +129,8 @@ ModeVGSolar::ModeVGSolar(void) :
     _last_turn_pwm_gcs_ms(0),
     _last_turn_gcs_phase(TurnPhase::IDLE),
     _actuators_were_armed(false),
-    _last_disarmed_actuator_gcs_ms(0)
+    _last_disarmed_actuator_gcs_ms(0),
+    _range_unsafe_since_ms(0)
 {
     AP_Param::setup_object_defaults(this, var_info);
 }
@@ -151,6 +170,7 @@ bool ModeVGSolar::_enter()
     AP::suction_cup().set_active(true);
     _actuators_were_armed = false;
     _last_disarmed_actuator_gcs_ms = 0;
+    _range_unsafe_since_ms = 0;
 
     rover.companion_computer.log_nevt(NCULog::EVT_ENTER_VGSL);
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: entered");
@@ -227,6 +247,10 @@ void ModeVGSolar::update()
     // 先消费本周期 NCU 指令，再判超时，避免「先超时停车、后收到新帧」的竞态
     check_ncu_timeout();
     try_recover_safety_hold();  // 倾角/NCU 条件满足后自动抬吸盘
+
+    if (_vg_submode != VGSubMode::ESTOP) {
+        check_rangefinder_safety();
+    }
 
     if (_vg_submode == VGSubMode::ESTOP) {
         update_estop();
@@ -419,24 +443,13 @@ void ModeVGSolar::read_companion_commands()
 
         switch (cmd.command) {
         case SYS_CMD_ESTOP:
-            // 导航中急停：停车并上报 nav_state=已取消
-            if (_vg_submode == VGSubMode::NAV) {
-                stop_vehicle();
-                g2.wp_nav.set_reversed(false);
-                _nav_phase = NavPhase::CRUISE;
-                _nav_report_state = NavReportState::CANCELLED;
-            }
-            _vg_submode = VGSubMode::ESTOP;
-            _turn_phase = TurnPhase::IDLE;
-            _turn_frozen = false;
-            clear_safety_hold_mask();
-            cc.stop_brushes();
-            AP::suction_cup().emergency_release();
-            gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: ESTOP");
+            enter_estop("VG_SOLAR: ESTOP");
             break;
         case SYS_CMD_ESTOP_CLEAR:
             if (_vg_submode == VGSubMode::ESTOP) {
                 _vg_submode = VGSubMode::STANDBY;
+                _fault_flags &= ~FAULT_RANGE_SAFE;
+                _range_unsafe_since_ms = 0;
                 gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: ESTOP cleared");
             }
             try_recover_safety_hold();
@@ -782,6 +795,73 @@ void ModeVGSolar::update_estop()
 {
     stop_vehicle();
     rover.companion_computer.stop_brushes();
+}
+
+void ModeVGSolar::enter_estop(const char *gcs_msg)
+{
+    if (_vg_submode == VGSubMode::NAV) {
+        stop_vehicle();
+        g2.wp_nav.set_reversed(false);
+        _nav_phase = NavPhase::CRUISE;
+        _nav_report_state = NavReportState::CANCELLED;
+    }
+    _vg_submode = VGSubMode::ESTOP;
+    _turn_phase = TurnPhase::IDLE;
+    _turn_frozen = false;
+    _last_ncu_cmd_ms = 0;
+    _await_ncu_after_lost_motion = false;
+    clear_safety_hold_mask();
+    rover.companion_computer.stop_brushes();
+    AP::suction_cup().emergency_release();
+    gcs().send_text(MAV_SEVERITY_WARNING, "%s", gcs_msg != nullptr ? gcs_msg : "VG_SOLAR: ESTOP");
+}
+
+void ModeVGSolar::check_rangefinder_safety()
+{
+    if (_vg_submode == VGSubMode::ESTOP) {
+        _range_unsafe_since_ms = 0;
+        return;
+    }
+
+#if AP_RANGEFINDER_ENABLED
+    const auto channel_unsafe = [this](enum Rotation orientation) -> bool {
+        const RangeFinder *rfnd = RangeFinder::get_singleton();
+        if (rfnd == nullptr || !rfnd->has_orientation(orientation)) {
+            return true;  // 无效 / 未配置
+        }
+        if (rfnd->status_orient(orientation) != RangeFinder::Status::Good) {
+            return true;
+        }
+        const uint16_t dist_cm = rfnd->distance_cm_orient(orientation);
+        const int16_t min_cm = _rf_safe_min_cm;
+        const int16_t max_cm = _rf_safe_max_cm;
+        if (min_cm > max_cm) {
+            return true;
+        }
+        return dist_cm < (uint16_t)min_cm || dist_cm > (uint16_t)max_cm;
+    };
+
+    // 与状态帧一致：LEFT_OUT=YAW_315，RIGHT_OUT=YAW_45
+    const bool unsafe = channel_unsafe(ROTATION_YAW_315) || channel_unsafe(ROTATION_YAW_45);
+    const uint32_t now = AP_HAL::millis();
+    if (!unsafe) {
+        _range_unsafe_since_ms = 0;
+        return;
+    }
+    if (_range_unsafe_since_ms == 0) {
+        _range_unsafe_since_ms = now;
+        return;
+    }
+    if (now - _range_unsafe_since_ms < RANGE_SAFE_DEBOUNCE_MS) {
+        return;
+    }
+
+    _fault_flags |= FAULT_RANGE_SAFE;
+    enter_estop("VG_SOLAR: ESTOP rangefinder");
+#else
+    _fault_flags |= FAULT_RANGE_SAFE;
+    enter_estop("VG_SOLAR: ESTOP rangefinder");
+#endif
 }
 
 // 吸盘故障同步与转弯中止

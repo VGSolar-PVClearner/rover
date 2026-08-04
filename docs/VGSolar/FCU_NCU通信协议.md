@@ -185,16 +185,18 @@
 | 运动状态 | uint8 | 见 5.1.2 |
 | 故障码 | uint16 | 见第六节 |
 | GPS 状态 | uint8 | `0` 无 / `1` 2D / `2` 3D / `3` RTK |
-| 左前距离 FL | uint16 | cm；无效 **`0xFFFF`** |
-| 右前距离 FR | uint16 | cm；无效 **`0xFFFF`** |
-| 左后距离 RL | uint16 | cm；无效 **`0xFFFF`** |
-| 右后距离 RR | uint16 | cm；无效 **`0xFFFF`** |
+| 左外距离 LEFT_OUT | uint16 | cm；接传感器；无效 **`0xFFFF`** |
+| 左内距离 LEFT_IN | uint16 | cm；当前拷贝 LEFT_OUT |
+| 右内距离 RIGHT_IN | uint16 | cm；当前拷贝 RIGHT_OUT |
+| 右外距离 RIGHT_OUT | uint16 | cm；接传感器；无效 **`0xFFFF`** |
 
 **超声波约定**：
 
-- 上报 `RangeFinder` 状态为 Good 时的真实距离（cm）；未配置/超时/非 Good → `0xFFFF`。
-- 不在此帧用 DYP「10～50 cm 安全带」过滤读数；安全带留给 FCU/NCU 各自策略。
-- 地面站 `RNGFNDx_ORIENT` 建议：FL=`7`(YAW_315)、FR=`1`(YAW_45)、RL=`5`(YAW_225)、RR=`3`(YAW_135)。
+- 四路均在车头；顺序 `LEFT_OUT → LEFT_IN → RIGHT_IN → RIGHT_OUT`。
+- 板载仅两路串口：LEFT_OUT / RIGHT_OUT 读 `RangeFinder`（Good 时为真实 cm）；LEFT_IN / RIGHT_IN 同侧拷贝。
+- 未配置/超时/非 Good → 对应侧为 `0xFFFF`（内侧一并拷贝）。
+- 状态帧仍报真实距离；安全带急停由 Mode 侧 `VGS_RF_MIN`/`RF_MAX` 处理。
+- 地面站 `RNGFNDx_ORIENT`：LEFT_OUT=`7`(YAW_315)、RIGHT_OUT=`1`(YAW_45)。
 
 #### 5.1.1 控制模式 `control_mode`
 
@@ -259,7 +261,8 @@
 | 8 | 低电压 | 如电量 ≤ 20% 阈值 |
 | 9 | 倾角过大 | 已吸附场景会 freeze |
 | 10 | 转弯或导航失败 | |
-| 11~15 | 预留 | |
+| 11 | 超声波安全带 | LEFT_OUT/RIGHT_OUT 超 `VGS_RF_MIN~MAX` 或无效；伴随 ESTOP |
+| 12~15 | 预留 | |
 
 多故障按位或；无故障为 0。
 
@@ -305,6 +308,7 @@ NCU: 0x03 写 0x0103=0 → 关刷
 |------|----------|
 | 运动中丢控（非零速度后约 200 ms 无新速度帧） | 停车、关刷；已吸附则 freeze；**不置 bit7** |
 | 急停 | 停车、关刷、吸盘释放；拒绝速度类运动直至解除 |
+| 超声波安全带 | LEFT_OUT/RIGHT_OUT 超 `VGS_RF_MIN~MAX` 或无效 → 同急停 + fault bit11；需解除急停 |
 | 低电压 | 关刷、拒绝开刷参数；bit8 |
 | 倾角过大（已吸附） | 停车、freeze 保压；bit9 |
 | 吸盘 FAULT | 中止转弯、bit4 |

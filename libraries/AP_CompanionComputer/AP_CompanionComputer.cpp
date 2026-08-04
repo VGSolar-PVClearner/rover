@@ -699,17 +699,17 @@ void AP_CompanionComputer::send_data()
     status_data.gps_status = map_gps_status_to_protocol(AP::gps().status());
 #endif
 
-    // 四路超声波 cm：FL/FR/RL/RR；无效 0xFFFF（不套用 DYP 10~50 安全带）
+    // 车头四路：LEFT_OUT/RIGHT_OUT 读传感器；LEFT_IN/RIGHT_IN 同侧拷贝；无效 0xFFFF
 #if AP_RANGEFINDER_ENABLED
-    status_data.range_fl_cm = range_cm_for_orient(ROTATION_YAW_315);
-    status_data.range_fr_cm = range_cm_for_orient(ROTATION_YAW_45);
-    status_data.range_rl_cm = range_cm_for_orient(ROTATION_YAW_225);
-    status_data.range_rr_cm = range_cm_for_orient(ROTATION_YAW_135);
+    status_data.range_left_out_cm = range_cm_for_orient(ROTATION_YAW_315);
+    status_data.range_right_out_cm = range_cm_for_orient(ROTATION_YAW_45);
+    status_data.range_left_in_cm = status_data.range_left_out_cm;
+    status_data.range_right_in_cm = status_data.range_right_out_cm;
 #else
-    status_data.range_fl_cm = RANGE_INVALID_CM;
-    status_data.range_fr_cm = RANGE_INVALID_CM;
-    status_data.range_rl_cm = RANGE_INVALID_CM;
-    status_data.range_rr_cm = RANGE_INVALID_CM;
+    status_data.range_left_out_cm = RANGE_INVALID_CM;
+    status_data.range_left_in_cm = RANGE_INVALID_CM;
+    status_data.range_right_in_cm = RANGE_INVALID_CM;
+    status_data.range_right_out_cm = RANGE_INVALID_CM;
 #endif
 
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];

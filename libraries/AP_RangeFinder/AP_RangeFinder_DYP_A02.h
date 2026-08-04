@@ -11,9 +11,9 @@
 #define DYP_A02_RANGE_MIN_CM  3
 #define DYP_A02_RANGE_MAX_CM  450
 
-// 安全距离范围 (cm)：读数超出 [MIN, MAX] 时判定为车辆故障（暂定，可后续调参）
-#define DYP_A02_SAFE_MIN_CM   10
-#define DYP_A02_SAFE_MAX_CM   50
+// 安全距离范围 (cm)：驱动内辅助接口用；Mode 急停以 VGS_RF_MIN/MAX 为准（默认 5~15）
+#define DYP_A02_SAFE_MIN_CM   5
+#define DYP_A02_SAFE_MAX_CM   15
 
 /**
  * @brief Driver for DYP-A02-V2.0 UART automatic-output ultrasonic rangefinder

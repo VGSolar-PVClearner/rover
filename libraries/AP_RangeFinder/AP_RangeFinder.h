@@ -304,7 +304,7 @@ public:
     static RangeFinder *get_singleton(void) { return _singleton; }
 
 #if AP_RANGEFINDER_DYP_A02_ENABLED
-    // 指定实例为 DYP-A02 时检查安全距离；超出 [DYP_A02_SAFE_MIN_CM, DYP_A02_SAFE_MAX_CM] 或无有效读数返回 true
+    // 指定实例为 DYP-A02 时检查安全距离；超出驱动 SAFE_MIN/MAX 或无有效读数返回 true（Mode 急停用 VGS_RF_*）
     // 非 DYP-A02 实例返回 false
     bool dyp_a02_has_safety_fault(uint8_t instance) const;
 #endif
