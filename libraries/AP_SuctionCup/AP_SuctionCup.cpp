@@ -244,7 +244,7 @@ void AP_SuctionCup::update()
         return;
     }
 
-    // 冻结态：不再推进状态机，仅维持关泵+密封（或 LOWERING 中途的部分阀位）
+    // 冻结态：不再推进状态机，仅维持停泵+密封（或 LOWERING 中途的部分阀位）
     if (_frozen) {
         apply_frozen_hold();
         if (_frozen_vacuum_ready) {
@@ -268,7 +268,7 @@ void AP_SuctionCup::update()
         update_raising(now);
         break;
     case State::LOWERED:
-        apply_lowered_hold();  // 转向阶段持续维持吸附（关泵保密封）
+        apply_lowered_hold();  // 转向阶段持续开泵+密封
         check_vacuum_loss(now);
         break;
     default:
@@ -508,16 +508,19 @@ void AP_SuctionCup::apply_raised_idle()
 
 void AP_SuctionCup::apply_lowered_hold()
 {
-    // 负压已建立：停泵省电，靠密封阀维持吸附
-    write_pump(false);
+    // 负压已建立：开泵+密封维持，直至 raise()/急停/freeze
+    write_pump(true);
     write_valve(true);
     request_lift(uint16_t(_lift_pwm_lowered.get()), false);
 }
 
 void AP_SuctionCup::apply_frozen_hold()
 {
+    // 安全保持：停泵+密封（与正常 LOWERED 开泵维持区分）
     if (_state == State::FROZEN || _state == State::LOWERED) {
-        apply_lowered_hold();
+        write_pump(false);
+        write_valve(true);
+        request_lift(uint16_t(_lift_pwm_lowered.get()), false);
         return;
     }
 

@@ -43,7 +43,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 |----------|--------------|--------------|------|
 | STOPPING / WAIT_STOPPED | `0x03` | `0x00` | 停车等待 |
 | LOWERING | `0x03` | `0x00` | 放下/密封/开泵 |
-| LOWERED + TURNING | `0x03` | **`0x03`** | 差速转（气泵已停，阀密封） |
+| LOWERED + TURNING | `0x03` | **`0x03`** | 差速转（气泵开、阀密封） |
 | RAISING | `0x03` | `0x00` | 关泵/放气/抬起 |
 | 完成退出 TURN | 恢复转弯前模式 | `0x00` | — |
 
@@ -71,7 +71,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 ### 4.1 吸附序列 lower()
 
 ```
-放气+停泵 → 缓速放下 → PWM 到位后等到位（红外有铁片→无铁片，或 LIFT_DLY）→ 密封阀 → 开泵 → 等 VAC_DLY → LOWERED
+放气+停泵 → 缓速放下 → PWM 到位后等到位（红外有铁片→无铁片，或 LIFT_DLY）→ 密封阀 → 开泵 → 等 VAC_DLY → LOWERED（开泵维持）
 ```
 
 有红外时：缓速过程中即可记下「有铁片」；PWM 到位后再等到「完全放下」。`LIFT_TO_MS`（自 PWM 到位起算）内未完成 → FAULT，**不密封、不开泵**。
@@ -81,7 +81,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 进入 LOWERED 后及转向全程：
 
-- 气泵 **关**（Relay off）
+- 气泵 **开**（Relay on），直至 `raise()` / 急停 / `freeze()`
 - 气阀 **密封**（Relay on）
 - 升降 **放下**
 
@@ -98,8 +98,8 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 | 方法 | 行为 |
 |------|------|
-| `freeze()` | 停推进 lower/raise；已吸附则 `apply_lowered_hold()`；不主动抬起 |
-| `unfreeze()` | 清 `_frozen`；已完成负压 → `LOWERED`；LOWERING 中途冻结 → `RAISED` |
+| `freeze()` | 停推进 lower/raise；已吸附则停泵+密封；不主动抬起 |
+| `unfreeze()` | 清 `_frozen`；已完成负压 → `LOWERED`（恢复开泵维持）；LOWERING 中途冻结 → `RAISED` |
 
 ---
 
@@ -261,7 +261,7 @@ RELAY2_FUNCTION = 1
 
 | 场景 | 履带 | 滚刷 | 吸盘 | fault | motion_state |
 |------|------|------|------|-------|--------------|
-| 转弯 LOWERED 段 | 差速 | 按 NCU | 关泵+密封 | — | **0x03** |
+| 转弯 LOWERED 段 | 差速 | 按 NCU | 开泵+密封 | — | **0x03** |
 | 倾角 hold | 停 | — | freeze | bit9 | 0x05 |
 | 运动丢控 hold | 停 | 关 | freeze | — | 0x00（不置 bit7） |
 | hold 恢复 | 停→STANDBY | — | raise | 条件清 | 0x00 |
