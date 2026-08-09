@@ -83,7 +83,10 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 
 - 整段超时：`VGS_TURN_TO`（秒），**不置**吸盘 bit4；已吸附则尝试抬起。  
 - 吸盘 FAULT：中止转弯，上报 bit4。  
-- `control_mode` 全程转弯=`0x03`；`motion_state=0x03` 仅在已吸附差速段（见协议文档）。
+- `control_mode` 全程转弯=`0x03`；`motion_state=0x03` 仅在已吸附差速段（见协议文档）。  
+- **TURN 期间一律拒绝速度指令**（含零速），拒因 `REJECT_TURN_ACTIVE`；不 Abort、不改阶段，转弯继续。  
+- **TURN 期间拒绝新的转弯指令**（同拒因）；等当前转弯完成回待机后再发。  
+- 完成后回 **STANDBY**，不恢复转弯前的 yaw/yawrate 目标。
 
 ---
 

@@ -477,10 +477,12 @@ void ModeVGSolar::read_companion_commands()
             gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: turn rejected, disarmed");
             return;
         }
-        _last_ncu_cmd_ms = 0;  // TURN 豁免看门狗
-        _await_ncu_after_lost_motion = false;
-        start_turn(cmd);
-        _fault_flags &= ~FAULT_COMM_TIMEOUT;
+        // 仅接受时清 await/看门狗；拒绝时不动，避免误触发 NCU hold 恢复 Abort
+        if (start_turn(cmd)) {
+            _last_ncu_cmd_ms = 0;  // TURN 豁免看门狗
+            _await_ncu_after_lost_motion = false;
+            _fault_flags &= ~FAULT_COMM_TIMEOUT;
+        }
         return;
     }
 
@@ -616,21 +618,21 @@ void ModeVGSolar::read_companion_commands()
             return;
         }
 
+        // 转弯全程拒速度（含零速），避免切走子模式却不抬盘、带负压行驶。
+        // NCU hold 恢复：本函数前已清 _await_ncu_after_lost_motion，同周期末尾 try_recover_safety_hold()。
+        if (_vg_submode == VGSubMode::TURN) {
+            _last_ncu_cmd_ms = 0;
+            cc.log_nspd(cmd.control_mode, cmd.velocity, cmd.yaw_data, 0, NCULog::REJECT_TURN_ACTIVE);
+            return;
+        }
+
         // 吸盘 lower/raise 序列进行中不接受速度，避免带吸盘移动
         if (AP::suction_cup().is_busy()) {
             cc.log_nspd(cmd.control_mode, cmd.velocity, cmd.yaw_data, 0, NCULog::REJECT_SUCTION_BUSY);
             return;
         }
 
-        // 转弯冻结：NCU 恢复通信后走统一安全恢复（倾角仍超限则继续等待）
-        if (_vg_submode == VGSubMode::TURN && _turn_frozen) {
-            _last_ncu_cmd_ms = 0;
-            try_recover_safety_hold();
-            cc.log_nspd(cmd.control_mode, cmd.velocity, cmd.yaw_data, 0, NCULog::REJECT_SAFETY_HOLD);
-            return;
-        }
-
-        // 其它安全保持期间不跟速度、不打开看门狗
+        // 安全保持期间不跟速度、不打开看门狗
         if (_safety_hold_mask != 0) {
             _last_ncu_cmd_ms = 0;
             cc.log_nspd(cmd.control_mode, cmd.velocity, cmd.yaw_data, 0, NCULog::REJECT_SAFETY_HOLD);
@@ -1056,10 +1058,19 @@ void ModeVGSolar::try_recover_safety_hold()
 }
 
 // 转弯序列（NCU 0x02）
-// 阶段：停车 → 等稳 500ms → lower 吸盘 → 原地/行进转弯 → raise 吸盘 → 恢复原子模式
-void ModeVGSolar::start_turn(const TurnData &cmd)
+// 阶段：停车 → 等稳 500ms → lower 吸盘 → 原地/行进转弯 → raise 吸盘 → 回待机
+bool ModeVGSolar::start_turn(const TurnData &cmd)
 {
     auto &cc = rover.companion_computer;
+
+    // 已在转弯中：拒绝新指令，避免静默重开、累计角清零
+    if (_vg_submode == VGSubMode::TURN) {
+        cc.log_ntrn(NCULog::TURN_ACTION_CMD, cmd.turn_mode, cmd.direction,
+                    cmd.target_angle, cmd.angular_vel, uint8_t(_turn_phase),
+                    0, NCULog::REJECT_TURN_ACTIVE);
+        gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: TURN rejected, turn active");
+        return false;
+    }
 
     // 安全保持/吸盘 busy/故障时拒绝新转弯
     if (_safety_hold_mask != 0) {
@@ -1067,7 +1078,7 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
                     cmd.target_angle, cmd.angular_vel, uint8_t(_turn_phase),
                     0, NCULog::REJECT_SAFETY_HOLD);
         gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: TURN rejected, safety hold active");
-        return;
+        return false;
     }
 
     if (AP::suction_cup().is_busy()) {
@@ -1075,7 +1086,7 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
                     cmd.target_angle, cmd.angular_vel, uint8_t(_turn_phase),
                     0, NCULog::REJECT_SUCTION_BUSY);
         gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: TURN rejected, suction busy");
-        return;
+        return false;
     }
 
     if (AP::suction_cup().has_fault()) {
@@ -1083,7 +1094,7 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
                     cmd.target_angle, cmd.angular_vel, uint8_t(_turn_phase),
                     0, NCULog::REJECT_SUCTION_FAULT);
         gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: TURN rejected, suction fault");
-        return;
+        return false;
     }
     AP::suction_cup().unfreeze();
     _turn_frozen = false;
@@ -1104,6 +1115,7 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
     gcs().send_text(MAV_SEVERITY_INFO,
                     "VG_SOLAR: TURN start dir=%d mode=%d angle=%.1f",
                     _turn_direction, _turn_mode_type, _turn_target_angle_deg);
+    return true;
 }
 
 void ModeVGSolar::update_turn()

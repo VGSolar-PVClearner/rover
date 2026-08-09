@@ -330,6 +330,7 @@ constexpr uint8_t REJECT_SUCTION_BUSY  = 3;
 constexpr uint8_t REJECT_SAFETY_HOLD   = 4;
 constexpr uint8_t REJECT_NAV_ACTIVE    = 5;
 constexpr uint8_t REJECT_SUCTION_FAULT = 6;
+constexpr uint8_t REJECT_TURN_ACTIVE   = 7;
 
 constexpr uint8_t EVT_TIMEOUT     = 1;
 constexpr uint8_t EVT_ENTER_VGSL  = 2;

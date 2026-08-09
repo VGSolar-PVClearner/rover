@@ -1331,7 +1331,8 @@ private:
     void update_nav();
     void update_estop();
     void enter_estop(const char *gcs_msg);
-    void start_turn(const TurnData &cmd);
+    // 接受则返回 true；拒绝（已在转弯/hold/busy/fault）返回 false
+    bool start_turn(const TurnData &cmd);
     void cancel_navigation();
     void check_ncu_timeout();
     void check_tilt_safety();

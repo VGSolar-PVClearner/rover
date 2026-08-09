@@ -95,6 +95,7 @@
 | 4 | SafetyHold | 安全保持中 |
 | 5 | NavActive | 导航中拒速度（主要用于 `NSPD`） |
 | 6 | SuctionFault | 吸盘故障（主要用于 `NTRN`） |
+| 7 | TurnActive | 转弯中拒速度（`NSPD`）或拒新转弯（`NTRN`） |
 
 **读法：** `LinVel` 连续且 `Acc=1`，但车仍一卡一卡 → 多半不是丢指令，应对齐 `RCOU` / 死区 / 编码器。
 
