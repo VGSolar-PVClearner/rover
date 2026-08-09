@@ -646,9 +646,6 @@ void AP_CompanionComputer::send_data()
         status_data.battery_percent = percentage;
     }
 
-    // 暂固定为100
-    // status_data.battery_percent = 100;
-
     // 经纬度 (度 × 1e7)
     Location loc;
     if (ahrs.get_location(loc)) {

@@ -3,6 +3,7 @@
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Param/AP_Param.h>
 #include <AP_Common/Location.h>
+#include <array>
 #include "AP_CompanionComputer_config.h"
 
 /*
@@ -109,12 +110,6 @@ public:
     // 丢弃未消费的速度/转弯/导航指令（保留急停等系统控制）
     // 进/出 VGSL 时调用，避免 Manual 期间堆积的旧速度在重进模式时突然生效
     void clear_pending_motion_commands();
-
-    // 急停锁存；parse_system_ctrl 置位，Mode 层执行停车/关刷/吸盘
-    bool is_estop_active() const
-    {
-        return _estop_active;
-    }
 
     // 滚刷运行参数停止：PWM 回中位并清零内存状态
     void stop_brushes();

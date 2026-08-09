@@ -57,7 +57,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 | `_exit()` | `emergency_release()` → `set_active(false)` |
 | `update()` | 已解锁：`suction_cup.update()` → 倾角/NCU 安全…；**未解锁**：外设安全位并中止 TURN/NAV |
 | 转弯 LOWER_SUCTION | `lower()`，等 `is_lowered()`（需已解锁） |
-| 转弯 RAISE_SUCTION | `raise()`，等 `is_raised()` |
+| 转弯 RAISE_SUCTION | 若冻结则先 `unfreeze()`，再 `raise()`，等 `is_raised()` |
 | 急停指令 | `emergency_release()`（`update_estop()` 仅停车+关刷） |
 | 未解锁 / 中途 disarm | 滚刷停、吸盘释放（抬起+放气+停泵）；`lower()` 拒绝 |
 
@@ -178,23 +178,18 @@ STOPPING → WAIT_STOPPED(500ms) → LOWER_SUCTION → TURNING → RAISE_SUCTION
 | TURNING | 按累计转角或 VGS_TURN_TO 结束 |
 | RAISE_SUCTION | `raise()` 失败 → bit4 收尾 |
 
-### GCS 调试日志
+### GCS 里程碑（阶段边沿，各一条）
 
-`send_turn_pwm_gcs()`：阶段切换立即上报，同阶段最多 1Hz。
+| 时机 | 文案 |
+|------|------|
+| 进入转弯 | `VG_SOLAR: TURN start dir=… mode=… angle=…` |
+| 开始放吸盘 | `VG_SOLAR: TURN lowering suction` |
+| 负压到位 | `Suction vacuum established …`（`AP_SuctionCup`） |
+| 开始差速转弯 | `VG_SOLAR: TURN rotating` |
+| 开始抬盘 | `VG_SOLAR: TURN raising suction` |
+| 抬盘完成回待机 | `VG_SOLAR: TURN complete, standby` |
 
-```
-VG_SOLAR TURN out: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u
-```
-
-`lift` 为升降 PWM（µs）；`valve`/`pump` 为 0/1（阀 1=密封，泵 1=开）。
-
-| tph | 含义 |
-|-----|------|
-| 1 | STOPPING |
-| 2 | WAIT_STOPPED |
-| 3 | LOWER_SUCTION |
-| 4 | TURNING |
-| 5 | RAISE_SUCTION |
+拒绝/超时等 WARNING 仍按原逻辑上报。
 
 ---
 

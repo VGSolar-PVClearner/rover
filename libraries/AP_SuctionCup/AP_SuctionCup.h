@@ -20,7 +20,7 @@
  *
  * 吸附序列 lower()：放气停泵 → 缓速放下 → 红外/延时到位 → 密封 → 开泵 → 等待负压 → LOWERED（开泵维持）
  * 释放序列 raise()：关泵 → 放气 → 等待泄压 → 缓速抬起 → 红外见铁片+延时/纯延时 → RAISED
- * freeze()：停泵+保持密封，不主动抬起（NCU 200ms 超时 / 倾角过大）
+ * freeze()：停泵+保持密封，不主动抬起（NCU 运动丢控超时 / 倾角过大）
  * 未 soft_armed：lower() 拒绝；update() 强制释放/安全位（抬起+放气+停泵）
  *
  * 升降到位：SCUP_IR_PIN>=0 时用槽型光电 GPIO（默认 98）。
@@ -56,11 +56,9 @@ public:
     bool raise();
     void freeze();
     void emergency_release();
-    void stop() { emergency_release(); }
     void clear_fault();
     void unfreeze();
 
-    bool is_active() const { return _active; }
     bool is_busy() const;
     bool is_lowered() const;
     bool is_raised() const;

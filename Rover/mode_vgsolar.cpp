@@ -24,7 +24,7 @@
  *   10Hz  publish_*() + send_data()       状态/导航反馈上行
  *
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
- * 安全：倾角>30° 或 NCU 200ms 无帧 → freeze 吸盘 + safety_hold；条件恢复后 raise
+ * 安全：倾角>30° 或 NCU 运动丢控超时（NCU_HEARTBEAT_TIMEOUT_MS）→ freeze 吸盘 + safety_hold；条件恢复后 raise
  *       未解锁 → 滚刷/气泵/气阀/吸盘强制安全位，禁止运动类 NCU 指令
  *       LEFT_OUT/RIGHT_OUT 超 VGS_RF_MIN~MAX 或无效 → ESTOP（需 NCU 解除）
  *
@@ -43,17 +43,7 @@ const AP_Param::GroupInfo ModeVGSolar::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO_FLAGS("ENABLE", 1, ModeVGSolar, _enabled, 0, AP_PARAM_FLAG_ENABLE),
 
-    // @Param: KP_YAW
-    // @DisplayName: VG Solar yaw P gain
-    // @Range: 0.1 10.0
-    // @User: Advanced
-    AP_GROUPINFO("KP_YAW", 2, ModeVGSolar, _kp_yaw, 1.0f),
-
-    // @Param: KP_SPEED
-    // @DisplayName: VG Solar speed P gain
-    // @Range: 0.1 5.0
-    // @User: Advanced
-    AP_GROUPINFO("KP_SPEED", 3, ModeVGSolar, _kp_speed, 0.5f),
+    // 索引 2/3 曾为 KP_YAW/KP_SPEED（未使用已删除）；勿复用，避免旧参数表错位
 
     // @Param: CRUISE_SPD
     // @DisplayName: VG Solar default cruise speed
@@ -98,7 +88,6 @@ const AP_Param::GroupInfo ModeVGSolar::var_info[] = {
 // 子模式/转弯/导航相关运行时状态初始化
 ModeVGSolar::ModeVGSolar(void) :
     _vg_submode(VGSubMode::STANDBY),
-    _submode_before_turn(VGSubMode::STANDBY),
     _turn_phase(TurnPhase::IDLE),
     _target_speed_ms(0.0f),
     _target_yaw_cd(0.0f),
@@ -126,8 +115,6 @@ ModeVGSolar::ModeVGSolar(void) :
     _await_ncu_after_lost_motion(false),
     _turn_timeout_aborted(false),
     _safety_hold_mask(0),
-    _last_turn_pwm_gcs_ms(0),
-    _last_turn_gcs_phase(TurnPhase::IDLE),
     _actuators_were_armed(false),
     _last_disarmed_actuator_gcs_ms(0),
     _range_unsafe_since_ms(0)
@@ -662,7 +649,7 @@ void ModeVGSolar::read_companion_commands()
             return;
         }
 
-        // 非零运动：打开 200ms 丢控看门狗
+        // 非零运动：打开丢控看门狗（NCU_HEARTBEAT_TIMEOUT_MS）
         _last_ncu_cmd_ms = AP_HAL::millis();
         _target_speed_ms = cmd.velocity * 0.01f;
 
@@ -915,6 +902,21 @@ void ModeVGSolar::set_turn_phase(TurnPhase phase)
     }
     _turn_phase = phase;
     log_turn_event(NCULog::TURN_ACTION_PHASE, 1, NCULog::REJECT_NONE);
+
+    // 关键边沿里程碑（负压到位由 AP_SuctionCup 自行上报）
+    switch (phase) {
+    case TurnPhase::LOWER_SUCTION:
+        gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN lowering suction");
+        break;
+    case TurnPhase::TURNING:
+        gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN rotating");
+        break;
+    case TurnPhase::RAISE_SUCTION:
+        gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN raising suction");
+        break;
+    default:
+        break;
+    }
 }
 
 void ModeVGSolar::log_turn_event(uint8_t action, uint8_t accepted, uint8_t reject_reason) const
@@ -1086,9 +1088,6 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
     AP::suction_cup().unfreeze();
     _turn_frozen = false;
 
-    _submode_before_turn = (_vg_submode == VGSubMode::TURN || _vg_submode == VGSubMode::ESTOP)
-                           ? VGSubMode::STANDBY : _vg_submode;
-
     _vg_submode = VGSubMode::TURN;
     _turn_direction = cmd.direction;
     _turn_mode_type = cmd.turn_mode;
@@ -1105,31 +1104,6 @@ void ModeVGSolar::start_turn(const TurnData &cmd)
     gcs().send_text(MAV_SEVERITY_INFO,
                     "VG_SOLAR: TURN start dir=%d mode=%d angle=%.1f",
                     _turn_direction, _turn_mode_type, _turn_target_angle_deg);
-    send_turn_pwm_gcs(true);
-}
-
-void ModeVGSolar::send_turn_pwm_gcs(bool force)
-{
-    // 阶段切换立即上报，同阶段最多 1Hz
-    const uint32_t now = AP_HAL::millis();
-    const bool phase_changed = _turn_phase != _last_turn_gcs_phase;
-    if (!force && !phase_changed &&
-        (now - _last_turn_pwm_gcs_ms) < TURN_PWM_GCS_INTERVAL_MS) {
-        return;
-    }
-
-    _last_turn_pwm_gcs_ms = now;
-    _last_turn_gcs_phase = _turn_phase;
-
-    const auto &scup = AP::suction_cup();
-    gcs().send_text(MAV_SEVERITY_INFO,
-                    "VG_SOLAR TURN out: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u",
-                    unsigned(_turn_phase),
-                    unsigned(scup.get_state_u8()),
-                    unsigned(scup.get_phase_u8()),
-                    unsigned(scup.get_last_lift_pwm_us()),
-                    unsigned(scup.get_last_valve_on()),
-                    unsigned(scup.get_last_pump_on()));
 }
 
 void ModeVGSolar::update_turn()
@@ -1137,7 +1111,6 @@ void ModeVGSolar::update_turn()
     if (_turn_frozen) {
         // 倾角/NCU 安全保持：只停车，等 try_recover_safety_hold 恢复
         stop_vehicle();
-        send_turn_pwm_gcs();
         return;
     }
 
@@ -1225,8 +1198,12 @@ void ModeVGSolar::update_turn()
 
     case TurnPhase::RAISE_SUCTION: {
         // 异步 raise；is_raised() 后 complete_turn() 回待机
+        // raise() 拒绝 _frozen：若仍冻结则先 unfreeze（与 release_safety_hold_suction 一致）
         if (!scup.is_busy() && !scup.is_raised()) {
-            if (scup.is_lowered() || scup.is_frozen()) {
+            if (scup.is_frozen()) {
+                scup.unfreeze();
+            }
+            if (scup.is_lowered()) {
                 if (!scup.raise()) {
                     abort_turn_suction_fault();
                     break;
@@ -1248,11 +1225,9 @@ void ModeVGSolar::update_turn()
     default:
         break;
     }
-
-    send_turn_pwm_gcs();
 }
 
-// 导航取消与运动丢控看门狗（仅非零速度后 200ms 无新速度帧则停车，不置 bit7）
+// 导航取消；运动丢控看门狗见 check_ncu_timeout（NCU_HEARTBEAT_TIMEOUT_MS，不置 bit7）
 void ModeVGSolar::cancel_navigation()
 {
     stop_vehicle();
@@ -1305,7 +1280,6 @@ void ModeVGSolar::check_ncu_timeout()
     }
 }
 
-// 距离查询与滚刷钩子（滚刷主路径走 CompanionComputer 参数 0x0101~0x0104）
 float ModeVGSolar::get_distance_to_destination() const
 {
     if (_vg_submode == VGSubMode::NAV) {
@@ -1313,15 +1287,6 @@ float ModeVGSolar::get_distance_to_destination() const
         return g2.wp_nav.get_distance_to_destination();
     }
     return 0.0f;
-}
-
-void ModeVGSolar::set_brush_control(uint8_t brush_id, bool turn_on)
-{
-    // Rover 框架回调；VGSolar 滚刷由 NCU 参数控制，此处仅处理关刷
-    (void)brush_id;
-    if (!turn_on) {
-        rover.companion_computer.stop_brushes();
-    }
 }
 
 #endif  // MODE_VGSOLAR_ENABLED
