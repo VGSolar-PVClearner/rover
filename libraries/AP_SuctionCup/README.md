@@ -43,9 +43,9 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 |----------|--------------|--------------|------|
 | STOPPING / WAIT_STOPPED | `0x03` | `0x00` | 停车等待 |
 | LOWERING | `0x03` | `0x00` | 放下/密封/开泵 |
-| LOWERED + TURNING | `0x03` | **`0x03`** | 差速转（气泵已停，阀密封） |
+| LOWERED + TURNING | `0x03` | **`0x03`** | 差速转（气泵开、阀密封） |
 | RAISING | `0x03` | `0x00` | 关泵/放气/抬起 |
-| 完成退出 TURN | 恢复转弯前模式 | `0x00` | — |
+| 完成退出 TURN | 回待机 STANDBY（不恢复转弯前 yaw/yawrate） | `0x00` | — |
 
 ---
 
@@ -57,7 +57,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 | `_exit()` | `emergency_release()` → `set_active(false)` |
 | `update()` | 已解锁：`suction_cup.update()` → 倾角/NCU 安全…；**未解锁**：外设安全位并中止 TURN/NAV |
 | 转弯 LOWER_SUCTION | `lower()`，等 `is_lowered()`（需已解锁） |
-| 转弯 RAISE_SUCTION | `raise()`，等 `is_raised()` |
+| 转弯 RAISE_SUCTION | 若冻结则先 `unfreeze()`，再 `raise()`，等 `is_raised()` |
 | 急停指令 | `emergency_release()`（`update_estop()` 仅停车+关刷） |
 | 未解锁 / 中途 disarm | 滚刷停、吸盘释放（抬起+放气+停泵）；`lower()` 拒绝 |
 
@@ -71,7 +71,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 ### 4.1 吸附序列 lower()
 
 ```
-放气+停泵 → 缓速放下 → PWM 到位后等到位（红外有铁片→无铁片，或 LIFT_DLY）→ 密封阀 → 开泵 → 等 VAC_DLY → LOWERED
+放气+停泵 → 缓速放下 → PWM 到位后等到位（红外有铁片→无铁片，或 LIFT_DLY）→ 密封阀 → 开泵 → 等负压（压力达标或 `VAC_DLY`）→ LOWERED（开泵维持）
 ```
 
 有红外时：缓速过程中即可记下「有铁片」；PWM 到位后再等到「完全放下」。`LIFT_TO_MS`（自 PWM 到位起算）内未完成 → FAULT，**不密封、不开泵**。
@@ -81,7 +81,7 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 进入 LOWERED 后及转向全程：
 
-- 气泵 **关**（Relay off）
+- 气泵 **开**（Relay on），直至 `raise()` / 急停 / `freeze()`
 - 气阀 **密封**（Relay on）
 - 升降 **放下**
 
@@ -98,8 +98,8 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 | 方法 | 行为 |
 |------|------|
-| `freeze()` | 停推进 lower/raise；已吸附则 `apply_lowered_hold()`；不主动抬起 |
-| `unfreeze()` | 清 `_frozen`；已完成负压 → `LOWERED`；LOWERING 中途冻结 → `RAISED` |
+| `freeze()` | 停推进 lower/raise；已吸附则停泵+密封；不主动抬起 |
+| `unfreeze()` | 清 `_frozen`；已完成负压 → `LOWERED`（恢复开泵维持）；LOWERING 中途冻结 → `RAISED` |
 
 ---
 
@@ -133,11 +133,11 @@ const bool turning = (_vg_submode == VGSubMode::TURN)
 
 | 恢复途径 | 说明 |
 |----------|------|
-| 自动 | 倾角回限；运动丢控 hold 需再收到 NCU 指令 |
-| 速度帧 | TURN 且 `_turn_frozen` 时尝试恢复（倾角仍超限则继续等） |
+| 自动 | 倾角回限；运动丢控 hold 需再收到 NCU 指令（清 `_await_ncu_after_lost_motion`）后，同周期末 `try_recover_safety_hold()` |
+| 速度帧 | **TURN 全程拒速度**（`REJECT_TURN_ACTIVE`）；非 TURN 时速度可清 `_await` 并参与恢复 |
 | 解除急停 | `SYS_CMD_ESTOP_CLEAR` 后调用 `try_recover_safety_hold()` |
 
-**安全保持期间**：速度帧仅刷新心跳；**NAV/YAW/YAWRATE 不再执行 motion update**（仅 `stop_vehicle` / STANDBY）；TURN 走 `_turn_frozen` 路径。
+**安全保持期间**：**NAV/YAW/YAWRATE 不再执行 motion update**（仅 `stop_vehicle` / STANDBY）；TURN 走 `_turn_frozen` 路径且拒速度。
 
 `unfreeze()`：若 freeze 时未完成负压（LOWERING 中途），回到 **RAISED** 而非 LOWERED。
 
@@ -178,23 +178,18 @@ STOPPING → WAIT_STOPPED(500ms) → LOWER_SUCTION → TURNING → RAISE_SUCTION
 | TURNING | 按累计转角或 VGS_TURN_TO 结束 |
 | RAISE_SUCTION | `raise()` 失败 → bit4 收尾 |
 
-### GCS 调试日志
+### GCS 里程碑（阶段边沿，各一条）
 
-`send_turn_pwm_gcs()`：阶段切换立即上报，同阶段最多 1Hz。
+| 时机 | 文案 |
+|------|------|
+| 进入转弯 | `VG_SOLAR: TURN start dir=… mode=… angle=…` |
+| 开始放吸盘 | `VG_SOLAR: TURN lowering suction` |
+| 负压到位 | `Suction vacuum established …`（`AP_SuctionCup`） |
+| 开始差速转弯 | `VG_SOLAR: TURN rotating` |
+| 开始抬盘 | `VG_SOLAR: TURN raising suction` |
+| 抬盘完成回待机 | `VG_SOLAR: TURN complete, standby` |
 
-```
-VG_SOLAR TURN out: tph=%u scup_st=%u scup_ph=%u lift=%u valve=%u pump=%u
-```
-
-`lift` 为升降 PWM（µs）；`valve`/`pump` 为 0/1（阀 1=密封，泵 1=开）。
-
-| tph | 含义 |
-|-----|------|
-| 1 | STOPPING |
-| 2 | WAIT_STOPPED |
-| 3 | LOWER_SUCTION |
-| 4 | TURNING |
-| 5 | RAISE_SUCTION |
+拒绝/超时等 WARNING 仍按原逻辑上报。
 
 ---
 
@@ -212,14 +207,15 @@ bit9 等在 mask 中时 motion_state 为 **0x05**，而非 0x03（bit7 已移出
 | 升降 SERVO → FUNCTION **159** | **需地面站手动配置** |
 | 升降默认 1900=抬 / 1100=放 | `SCUP_LIFT_PWM_*` 可调；按 `SCUP_LIFT_RATE` 缓变 |
 | 气阀 / 气泵 | **Relay**（`SCUP_VLV_RLY` / `SCUP_PUMP_RLY`）；需配 `RELAYx_PIN` 等 |
-| 升降到位 | 槽型光电（`SCUP_IR_PIN`，默认 98）或禁用后仅 `LIFT_DLY`；负压仍仅 `VAC_DLY` |
+| 升降到位 | 槽型光电（`SCUP_IR_PIN`，默认 98）或禁用后仅 `LIFT_DLY` |
+| 负压判定 | 启用 `AP_SuctionPressure` 时按 `VAC_P_KPA`/`VAC_DEB_MS`；禁用时固定等 `VAC_DLY_MS` |
 
 ### 地面站参数（SCUP_）
 
 | 参数 | 默认 | 范围 | 含义 |
 |------|------|------|------|
 | SCUP_LIFT_DLY_MS | **2000** | 0~5000 | 无红外：PWM **到位后**等待；有红外抬起：见到铁片后的补行程 |
-| SCUP_VAC_DLY_MS | **3000** | 100~10000 | 开泵后建立负压等待 |
+| SCUP_VAC_DLY_MS | **3000** | 100~10000 | 启用压力时：建负压最大等待；禁用时：固定等待 |
 | SCUP_VENT_DLY_MS | **2000** | 100~5000 | 放气后、抬起前等待 |
 | SCUP_ACT_TOUT_MS | **30000** | 1000~60000 | lower/raise 整段超时 → FAULT |
 | SCUP_LIFT_PWM_R | **1900** | 1000~2000 | 抬起位置 PWM µs |
@@ -231,6 +227,9 @@ bit9 等在 mask 中时 motion_state 为 **0x05**，而非 0x03（bit7 已移出
 | SCUP_IR_POL | **0** | 0/1 | 0：高=有铁片、低=完全放下；1：反相 |
 | SCUP_IR_DEB_MS | **30** | 0~500 | 红外电平消抖时间 |
 | SCUP_LIFT_TO_MS | **5000** | 500~15000 | 有红外时等放下/见到铁片超时 → FAULT |
+| SCUP_VAC_P_KPA | **-50** | -100~0 | 吸附建立阈值 kPa（需压力传感器） |
+| SCUP_VAC_DEB_MS | **300** | 0~2000 | 压力连续达标消抖 ms |
+| SCUP_VAC_HYST | **5** | 0~50 | 掉压回差 kPa |
 
 `ACT_TOUT_MS` 应覆盖：缓速时间 + 红外/`LIFT_DLY` + `VAC_DLY`（或 `VENT_DLY` + 缓速 + 红外/`LIFT_DLY`）。  
 有红外时另受 `LIFT_TO_MS` 约束（下降超时不会进入密封/开泵）。
@@ -261,7 +260,7 @@ RELAY2_FUNCTION = 1
 
 | 场景 | 履带 | 滚刷 | 吸盘 | fault | motion_state |
 |------|------|------|------|-------|--------------|
-| 转弯 LOWERED 段 | 差速 | 按 NCU | 关泵+密封 | — | **0x03** |
+| 转弯 LOWERED 段 | 差速 | 按 NCU | 开泵+密封 | — | **0x03** |
 | 倾角 hold | 停 | — | freeze | bit9 | 0x05 |
 | 运动丢控 hold | 停 | 关 | freeze | — | 0x00（不置 bit7） |
 | hold 恢复 | 停→STANDBY | — | raise | 条件清 | 0x00 |
@@ -290,7 +289,7 @@ NCU 无吸盘专用协议；由 FCU 在转弯序列内调用本库。
 
 ## 十二、已知限制
 
-1. 负压仍仅靠 `SCUP_VAC_DLY_MS`，无真空压力传感器  
+1. 负压：默认走 `AP_SuctionPressure`（`SPRESS_*` + `SCUP_VAC_P_KPA` 等）；`SPRESS_PIN=-1` 时回退固定 `VAC_DLY_MS`  
 2. 红外表示「是否完全放下」（槽型+铁片），不是双端点；抬起=见到铁片后再 `LIFT_DLY`，且须 PWM 到位  
 3. `LOWER_SEAL` 后下一周期即开泵，无单独 seal 等待  
 4. 运行中 FAULT 需退出再进 VGSL 或地面站 `clear_fault()`，无 NCU 专用清障指令  

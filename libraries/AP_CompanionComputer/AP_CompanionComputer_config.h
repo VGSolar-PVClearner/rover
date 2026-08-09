@@ -1,7 +1,6 @@
 #pragma once
 
 #include <AP_HAL/AP_HAL.h>
-#include <array>
 
 /*
  * 通用帧格式 (所有收/发数据包均遵循):
@@ -320,7 +319,7 @@ constexpr uint8_t COMPANION_SEND_NAV_LENGTH   = FRAME_OVERHEAD + FCU_DATA_LEN_NA
 
 constexpr uint32_t PACKET_TIMEOUT_MS        = 200;
 // 非零速度后无新速度帧超过此时长则停车（丢控兜底，不置 fault bit7）
-constexpr uint32_t NCU_HEARTBEAT_TIMEOUT_MS = 200;
+constexpr uint32_t NCU_HEARTBEAT_TIMEOUT_MS = 500;
 
 // DataFlash NCU 通信日志（见 docs/VGSolar/NCU通信日志设计.md）
 namespace NCULog {
@@ -331,6 +330,7 @@ constexpr uint8_t REJECT_SUCTION_BUSY  = 3;
 constexpr uint8_t REJECT_SAFETY_HOLD   = 4;
 constexpr uint8_t REJECT_NAV_ACTIVE    = 5;
 constexpr uint8_t REJECT_SUCTION_FAULT = 6;
+constexpr uint8_t REJECT_TURN_ACTIVE   = 7;
 
 constexpr uint8_t EVT_TIMEOUT     = 1;
 constexpr uint8_t EVT_ENTER_VGSL  = 2;
@@ -436,18 +436,10 @@ struct NavStatusData {
 
 #pragma pack(pop)
 
-// 数据包构建器
+// 数据包解析（收帧用）；发帧走 build_frame()
 class PacketBuilder
 {
 public:
-    template <typename T>
-    static std::array<uint8_t, sizeof(T)> serialize(const T& packet)
-    {
-        std::array<uint8_t, sizeof(T)> buffer;
-        memcpy(buffer.data(), &packet, sizeof(T));
-        return buffer;
-    }
-
     template <typename T>
     static T deserialize(const uint8_t* data)
     {

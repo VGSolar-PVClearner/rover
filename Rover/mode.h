@@ -1267,7 +1267,6 @@ private:
     };
 
     VGSubMode _vg_submode;
-    VGSubMode _submode_before_turn;
     TurnPhase _turn_phase;
 
     float _target_speed_ms;
@@ -1309,18 +1308,12 @@ private:
     static constexpr uint8_t SAFETY_HOLD_NCU_COMM = 1 << 1;
     uint8_t _safety_hold_mask;
 
-    static constexpr uint32_t TURN_PWM_GCS_INTERVAL_MS = 1000;  // 转弯调试 PWM 上报间隔
-    uint32_t _last_turn_pwm_gcs_ms;
-    TurnPhase _last_turn_gcs_phase;
-
     // 未解锁时外设强制安全位；边沿提示限频
     static constexpr uint32_t DISARMED_ACTUATOR_GCS_INTERVAL_MS = 5000;
     bool _actuators_were_armed;
     uint32_t _last_disarmed_actuator_gcs_ms;
 
     AP_Int8  _enabled;
-    AP_Float _kp_yaw;
-    AP_Float _kp_speed;
     AP_Float _cruise_speed_default;
     AP_Float _turn_timeout;
     AP_Float _turn_max_speed;
@@ -1338,7 +1331,8 @@ private:
     void update_nav();
     void update_estop();
     void enter_estop(const char *gcs_msg);
-    void start_turn(const TurnData &cmd);
+    // 接受则返回 true；拒绝（已在转弯/hold/busy/fault）返回 false
+    bool start_turn(const TurnData &cmd);
     void cancel_navigation();
     void check_ncu_timeout();
     void check_tilt_safety();
@@ -1354,8 +1348,6 @@ private:
     void complete_turn();
     void set_turn_phase(TurnPhase phase);
     void log_turn_event(uint8_t action, uint8_t accepted, uint8_t reject_reason) const;
-    void send_turn_pwm_gcs(bool force = false);
-    void set_brush_control(uint8_t brush_id, bool turn_on);
     // 未解锁：停刷、吸盘释放/安全位，中止 TURN/NAV/YAW 运动
     void apply_disarmed_actuator_safety();
     // 清零速度/偏航率目标并切 ModeGuided 到 Stop，避免旧目标残留

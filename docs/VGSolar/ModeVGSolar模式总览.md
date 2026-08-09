@@ -83,7 +83,10 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 
 - 整段超时：`VGS_TURN_TO`（秒），**不置**吸盘 bit4；已吸附则尝试抬起。  
 - 吸盘 FAULT：中止转弯，上报 bit4。  
-- `control_mode` 全程转弯=`0x03`；`motion_state=0x03` 仅在已吸附差速段（见协议文档）。
+- `control_mode` 全程转弯=`0x03`；`motion_state=0x03` 仅在已吸附差速段（见协议文档）。  
+- **TURN 期间一律拒绝速度指令**（含零速），拒因 `REJECT_TURN_ACTIVE`；不 Abort、不改阶段，转弯继续。  
+- **TURN 期间拒绝新的转弯指令**（同拒因）；等当前转弯完成回待机后再发。  
+- 完成后回 **STANDBY**，不恢复转弯前的 yaw/yawrate 目标。
 
 ---
 
@@ -116,7 +119,7 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 | 触发 | 动作 |
 |------|------|
 | 已吸附且 \|roll\|/\|pitch\| 过大（约 >30°） | 停车 + `freeze` 吸盘 + bit9；转弯则 `_turn_frozen` |
-| 非零速度后 ≈200 ms 无新速度帧 | 停车、关刷、清零速度目标；已吸附则 freeze；**不置 bit7**（零速/待机静默正常；TURN/NAV 不启看门狗） |
+| 非零速度后 ≈500 ms 无新速度帧 | 停车、关刷、清零速度目标；已吸附则 freeze；**不置 bit7**（零速/待机静默正常；TURN/NAV 不启看门狗） |
 | 解锁边沿 | 丢弃上锁期间堆积的 NCU 运动指令并清零速度目标，避免一解锁就跟旧速度 |
 | 急停 | 停车、关刷、吸盘完整释放；`motion_state=0x04` |
 | 超声波安全带 | LEFT_OUT/RIGHT_OUT 不在 `VGS_RF_MIN~MAX` 或无效，消抖后进 ESTOP + bit11；**不自动解除** |
