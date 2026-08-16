@@ -726,6 +726,10 @@ void AP_CompanionComputer::send_data()
         status_data.vehicle_flags |= VEHICLE_FLAG_ARMED;
     }
 
+    // 实测偏航角速度 (0.01°/s)：AHRS 机体 Z；取反后与 NCU 速度指令同号（正=左转）
+    status_data.yaw_rate = constrain_int16(
+        int16_t(lroundf(-degrees(ahrs.get_gyro().z) * 100.0f)), -32767, 32767);
+
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];
     const size_t frame_len = build_frame(FCU_FB_STATUS,
                                          reinterpret_cast<const uint8_t *>(&status_data),
