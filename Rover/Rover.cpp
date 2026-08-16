@@ -161,6 +161,16 @@ void Rover::get_scheduler_tasks(const AP_Scheduler::Task *&tasks,
 void Rover::receive_companion_computer()
 {
     companion_computer.update();  // 解析 NCU → FCU 指令
+#if MODE_VGSOLAR_ENABLED
+    // ARM/DISARM 仅 Mode17 消费；其它模式立即失败 ACK，避免无应答或进模式后误执行
+    if (control_mode != &mode_vgsolar && companion_computer.is_new_system_ctrl()) {
+        const auto &cmd = companion_computer.get_latest_system_ctrl();
+        if (cmd.command == SYS_CMD_ARM || cmd.command == SYS_CMD_DISARM) {
+            companion_computer.clear_new_system_flag();
+            companion_computer.send_system_ctrl_ack(CMD_ACK_FAILED);
+        }
+    }
+#endif
 }
 
 void Rover::send2_companion_computer()

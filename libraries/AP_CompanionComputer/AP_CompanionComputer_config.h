@@ -71,6 +71,7 @@
  *
  * --- 0x05 系统控制 (NCU_CMD_SYSTEM_CTRL, DATA_LENGTH = 0x01) ---
  * byte 5               command             0x01:急停  0x02:解除急停  0x03:重启  0x04:关机
+ *                                          0x05:解锁(ARM)  0x06:上锁(DISARM)；ARM/DISARM 的 ACK 由 Mode 按执行结果发
  * byte 6               Checksum
  * byte 7               end sign            0xFF
  *
@@ -108,7 +109,7 @@
 * byte 3               command content     见下表
 * byte 4               DATA_LENGTH         见下表
 *
-* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x22) ---
+* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x23) ---
 * byte 5               battery_percent     电池电量 0~100 %
 * byte 6               longitude8          经度 int32 低 8 位 (×1e7)
 * byte 7               longitude16         经度 int32 8~15 位
@@ -143,8 +144,9 @@
 * byte 36              range_right_in_H
 * byte 37              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
 * byte 38              range_right_out_H
-* byte 39              Checksum
-* byte 40              end sign            0xFF
+* byte 39              vehicle_flags       bit0=1 已解锁 / 0 已上锁；bit1~7 预留
+* byte 40              Checksum
+* byte 41              end sign            0xFF
 *
 * 四路均在车头；仅 LEFT_OUT / RIGHT_OUT 接串口传感器。
 * ORIENT：LEFT_OUT=ROTATION_YAW_315(7)  RIGHT_OUT=ROTATION_YAW_45(1)
@@ -230,6 +232,8 @@ constexpr uint8_t SYS_CMD_ESTOP         = 0x01;
 constexpr uint8_t SYS_CMD_ESTOP_CLEAR   = 0x02;
 constexpr uint8_t SYS_CMD_REBOOT        = 0x03;
 constexpr uint8_t SYS_CMD_SHUTDOWN      = 0x04;
+constexpr uint8_t SYS_CMD_ARM           = 0x05;  // 解锁；ACK 由 Mode 按执行结果发送
+constexpr uint8_t SYS_CMD_DISARM        = 0x06;  // 上锁；ACK 由 Mode 按执行结果发送
 
 // 导航模式
 constexpr uint8_t NAV_MODE_GPS          = 0x01;
@@ -304,8 +308,11 @@ constexpr uint8_t NCU_DATA_LEN_POSITION     = 15;
 constexpr uint8_t NCU_RX_MAX_DATA_LEN  = NCU_DATA_LEN_POSITION;
 constexpr uint8_t COMPANION_RECV_TOTAL_LENGTH = FRAME_OVERHEAD + NCU_RX_MAX_DATA_LEN;
 
-constexpr uint8_t FCU_DATA_LEN_STATUS      = 34;  // 原 26 + 4×uint16 超声波 cm
+constexpr uint8_t FCU_DATA_LEN_STATUS      = 35;  // 34 + vehicle_flags
 constexpr uint16_t RANGE_INVALID_CM        = 0xFFFF;  // 测距无效/无传感器
+
+// 状态帧 vehicle_flags（数据体末尾 1 字节）
+constexpr uint8_t VEHICLE_FLAG_ARMED       = (1U << 0);  // 1=已解锁 soft_armed
 constexpr uint8_t FCU_DATA_LEN_CMD_ACK     = 2;
 constexpr uint8_t FCU_DATA_LEN_PARAM       = 7;
 constexpr uint8_t FCU_DATA_LEN_NAV_STATUS  = 8;  // nav_state+coord_mode+dist32+heading_err
@@ -378,7 +385,7 @@ struct ParamReadData {
 
 // NCU 0x05 系统控制数据体（1 字节）
 struct SystemCtrlData {
-    uint8_t command;  // SYS_CMD_ESTOP / ESTOP_CLEAR / REBOOT / SHUTDOWN
+    uint8_t command;  // SYS_CMD_ESTOP / ESTOP_CLEAR / REBOOT / SHUTDOWN / ARM / DISARM
 };
 
 // NCU 0x06 位置导航数据体（15 字节）
@@ -409,6 +416,7 @@ struct StatusFeedbackData {
     uint16_t range_left_in_cm;    // 左内：拷贝 left_out
     uint16_t range_right_in_cm;   // 右内：拷贝 right_out
     uint16_t range_right_out_cm;  // 右外 cm（真传感器）
+    uint8_t  vehicle_flags;       // VEHICLE_FLAG_ARMED 等；bit1~7 预留填 0
 };
 static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
               "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");

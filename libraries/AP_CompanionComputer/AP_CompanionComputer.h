@@ -45,6 +45,8 @@ public:
 
     // ModeVGSolar 导航 ACK（0xBB 0x02，cmd_type=NCU_CMD_POSITION）
     void send_position_ack(uint8_t status);
+    // ModeVGSolar 系统控制 ARM/DISARM ACK（执行结果）
+    void send_system_ctrl_ack(uint8_t status);
     // ModeVGSolar 导航期间更新；send_nav=true 时本周期发送 0xBB 0x04
     void set_nav_status(const NavStatusData &data, bool send_nav);
     void send_nav_data();
