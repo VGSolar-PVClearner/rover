@@ -726,9 +726,27 @@ void AP_CompanionComputer::send_data()
         status_data.vehicle_flags |= VEHICLE_FLAG_ARMED;
     }
 
-    // 实测偏航角速度 (0.01°/s)：AHRS 机体 Z；取反后与 NCU 速度指令同号（正=左转）
-    status_data.yaw_rate = constrain_int16(
-        int16_t(lroundf(-degrees(ahrs.get_gyro().z) * 100.0f)), -32767, 32767);
+    // 机体加速度 (cm/s²)；陀螺 (0.01°/s，AP 原号)。gyro_z：+右转 / -左转
+    const Vector3f &gyro = ahrs.get_gyro();
+    const Vector3f &accel = ahrs.get_accel();
+    status_data.ax = constrain_int16(int16_t(lroundf(accel.x * 100.0f)), -32767, 32767);
+    status_data.ay = constrain_int16(int16_t(lroundf(accel.y * 100.0f)), -32767, 32767);
+    status_data.az = constrain_int16(int16_t(lroundf(accel.z * 100.0f)), -32767, 32767);
+    status_data.gyro_x = constrain_int16(int16_t(lroundf(degrees(gyro.x) * 100.0f)), -32767, 32767);
+    status_data.gyro_y = constrain_int16(int16_t(lroundf(degrees(gyro.y) * 100.0f)), -32767, 32767);
+    status_data.gyro_z = constrain_int16(int16_t(lroundf(degrees(gyro.z) * 100.0f)), -32767, 32767);
+
+    // 左右轮编码器累计脉冲；未配置则为 0
+    status_data.enc_left = 0;
+    status_data.enc_right = 0;
+    if (wenc != nullptr) {
+        if (wenc->num_sensors() > 0 && wenc->enabled(0)) {
+            status_data.enc_left = wenc->get_total_count(0);
+        }
+        if (wenc->num_sensors() > 1 && wenc->enabled(1)) {
+            status_data.enc_right = wenc->get_total_count(1);
+        }
+    }
 
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];
     const size_t frame_len = build_frame(FCU_FB_STATUS,
