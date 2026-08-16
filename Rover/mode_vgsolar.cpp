@@ -26,7 +26,7 @@
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
  * 安全：倾角>30° 或 NCU 运动丢控超时（NCU_HEARTBEAT_TIMEOUT_MS）→ freeze 吸盘 + safety_hold；条件恢复后 raise
  *       未解锁 → 滚刷/气泵/气阀/吸盘强制安全位，禁止运动类 NCU 指令
- *       LEFT_OUT/RIGHT_OUT 超 VGS_RF_MIN~MAX 或无效 → ESTOP（需 NCU 解除）
+ *       LEFT_OUT/RIGHT_OUT 距离 > VGS_RF_MAX 或无效 → ESTOP（需 NCU 解除）；≤ RF_MAX 正常
  *
  */
 
@@ -66,17 +66,9 @@ const AP_Param::GroupInfo ModeVGSolar::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("TURN_SPD", 6, ModeVGSolar, _turn_max_speed, 0.3f),
 
-    // @Param: RF_MIN
-    // @DisplayName: VG Solar rangefinder safe min
-    // @Description: Inclusive safe-band lower limit (cm) for LEFT_OUT/RIGHT_OUT; outside or invalid triggers ESTOP
-    // @Range: 1 450
-    // @Units: cm
-    // @User: Standard
-    AP_GROUPINFO("RF_MIN", 7, ModeVGSolar, _rf_safe_min_cm, 5),
-
     // @Param: RF_MAX
     // @DisplayName: VG Solar rangefinder safe max
-    // @Description: Inclusive safe-band upper limit (cm) for LEFT_OUT/RIGHT_OUT
+    // @Description: Inclusive upper limit (cm) for LEFT_OUT/RIGHT_OUT; distance > RF_MAX or invalid triggers ESTOP
     // @Range: 1 450
     // @Units: cm
     // @User: Standard
@@ -822,12 +814,12 @@ void ModeVGSolar::check_rangefinder_safety()
             return true;
         }
         const uint16_t dist_cm = rfnd->distance_cm_orient(orientation);
-        const int16_t min_cm = _rf_safe_min_cm;
         const int16_t max_cm = _rf_safe_max_cm;
-        if (min_cm > max_cm) {
+        if (max_cm < 1) {
             return true;
         }
-        return dist_cm < (uint16_t)min_cm || dist_cm > (uint16_t)max_cm;
+        // ≤ RF_MAX 正常；> RF_MAX 不正常
+        return dist_cm > (uint16_t)max_cm;
     };
 
     // 与状态帧一致：LEFT_OUT=YAW_315，RIGHT_OUT=YAW_45

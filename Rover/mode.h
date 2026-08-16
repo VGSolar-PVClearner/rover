@@ -1317,8 +1317,7 @@ private:
     AP_Float _cruise_speed_default;
     AP_Float _turn_timeout;
     AP_Float _turn_max_speed;
-    AP_Int16 _rf_safe_min_cm;  // 安全带下限 cm（含）
-    AP_Int16 _rf_safe_max_cm;  // 安全带上限 cm（含）
+    AP_Int16 _rf_safe_max_cm;  // 安全带上限 cm（含）：距离 ≤ 此值正常，> 或无效则不正常
 
     static constexpr uint32_t RANGE_SAFE_DEBOUNCE_MS = 100;
     uint32_t _range_unsafe_since_ms;

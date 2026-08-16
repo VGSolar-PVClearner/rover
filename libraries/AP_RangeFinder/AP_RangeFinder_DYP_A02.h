@@ -11,7 +11,7 @@
 #define DYP_A02_RANGE_MIN_CM  3
 #define DYP_A02_RANGE_MAX_CM  450
 
-// 安全距离范围 (cm)：驱动内辅助接口用；Mode 急停以 VGS_RF_MIN/MAX 为准（默认 5~15）
+// 安全距离上限 (cm)：驱动内辅助接口用；Mode 急停以 VGS_RF_MAX 为准（默认 15，≤ 正常）
 #define DYP_A02_SAFE_MIN_CM   5
 #define DYP_A02_SAFE_MAX_CM   15
 
