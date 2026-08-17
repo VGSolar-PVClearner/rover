@@ -726,9 +726,10 @@ void AP_CompanionComputer::send_data()
         status_data.vehicle_flags |= VEHICLE_FLAG_ARMED;
     }
 
-    // 机体加速度 (cm/s²)；陀螺 (0.01°/s，AP 原号)。gyro_z：+右转 / -左转
+    // 机体 IMU（AHRS 融合路径）：accel = INS - bias；gyro = gyro_estimate
+    // gyro_z：+右转 / -左转
     const Vector3f &gyro = ahrs.get_gyro();
-    const Vector3f &accel = ahrs.get_accel();
+    const Vector3f accel = ahrs.get_accel() - ahrs.get_accel_bias();
     status_data.ax = constrain_int16(int16_t(lroundf(accel.x * 100.0f)), -32767, 32767);
     status_data.ay = constrain_int16(int16_t(lroundf(accel.y * 100.0f)), -32767, 32767);
     status_data.az = constrain_int16(int16_t(lroundf(accel.z * 100.0f)), -32767, 32767);
@@ -746,6 +747,15 @@ void AP_CompanionComputer::send_data()
         if (wenc->num_sensors() > 1 && wenc->enabled(1)) {
             status_data.enc_right = wenc->get_total_count(1);
         }
+    }
+
+    // 相对 EKF 原点北/东 (cm)；无原点或定位无效时为 0
+    status_data.pos_n_cm = 0;
+    status_data.pos_e_cm = 0;
+    Vector2f pos_ne_m;
+    if (ahrs.get_relative_position_NE_origin(pos_ne_m)) {
+        status_data.pos_n_cm = int32_t(lroundf(pos_ne_m.x * 100.0f));
+        status_data.pos_e_cm = int32_t(lroundf(pos_ne_m.y * 100.0f));
     }
 
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];

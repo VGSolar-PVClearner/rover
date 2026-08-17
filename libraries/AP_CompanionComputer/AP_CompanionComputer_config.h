@@ -109,7 +109,7 @@
 * byte 3               command content     见下表
 * byte 4               DATA_LENGTH         见下表
 *
-* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x37) ---
+* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x3F) ---
 * byte 5               battery_percent     电池电量 0~100 %
 * byte 6               longitude8          经度 int32 低 8 位 (×1e7)
 * byte 7               longitude16         经度 int32 8~15 位
@@ -145,13 +145,13 @@
 * byte 37              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
 * byte 38              range_right_out_H
 * byte 39              vehicle_flags       bit0=1 已解锁 / 0 已上锁；bit1~7 预留
-* byte 40              ax_L                机体加速度 X int16, cm/s²
+* byte 40              ax_L                机体加速度 X int16, cm/s²（AHRS：IMU - bias）
 * byte 41              ax_H
 * byte 42              ay_L                机体加速度 Y int16, cm/s²
 * byte 43              ay_H
 * byte 44              az_L                机体加速度 Z int16, cm/s²
 * byte 45              az_H
-* byte 46              gyro_x_L            机体陀螺 X int16, 0.01°/s（ArduPilot 原号）
+* byte 46              gyro_x_L            机体陀螺 X int16, 0.01°/s（AHRS gyro_estimate）
 * byte 47              gyro_x_H
 * byte 48              gyro_y_L            机体陀螺 Y int16, 0.01°/s
 * byte 49              gyro_y_H
@@ -165,8 +165,16 @@
 * byte 57              enc_right16
 * byte 58              enc_right24
 * byte 59              enc_right32
-* byte 60              Checksum
-* byte 61              end sign            0xFF
+* byte 60              pos_n8               相对 EKF 原点北向 int32 cm（无效 0）
+* byte 61              pos_n16
+* byte 62              pos_n24
+* byte 63              pos_n32
+* byte 64              pos_e8               相对 EKF 原点东向 int32 cm（无效 0）
+* byte 65              pos_e16
+* byte 66              pos_e24
+* byte 67              pos_e32
+* byte 68              Checksum
+* byte 69              end sign            0xFF
 *
 * 四路均在车头；仅 LEFT_OUT / RIGHT_OUT 接串口传感器。
 * ORIENT：LEFT_OUT=ROTATION_YAW_315(7)  RIGHT_OUT=ROTATION_YAW_45(1)
@@ -328,7 +336,7 @@ constexpr uint8_t NCU_DATA_LEN_POSITION     = 15;
 constexpr uint8_t NCU_RX_MAX_DATA_LEN  = NCU_DATA_LEN_POSITION;
 constexpr uint8_t COMPANION_RECV_TOTAL_LENGTH = FRAME_OVERHEAD + NCU_RX_MAX_DATA_LEN;
 
-constexpr uint8_t FCU_DATA_LEN_STATUS      = 55;  // flags + IMU(6*int16) + enc(2*uint32)
+constexpr uint8_t FCU_DATA_LEN_STATUS      = 63;  // 55 + pos_n/pos_e (2*int32)
 constexpr uint16_t RANGE_INVALID_CM        = 0xFFFF;  // 测距无效/无传感器
 
 // 状态帧 vehicle_flags（IMU/编码器之前）
@@ -437,14 +445,16 @@ struct StatusFeedbackData {
     uint16_t range_right_in_cm;   // 右内：拷贝 right_out
     uint16_t range_right_out_cm;  // 右外 cm（真传感器）
     uint8_t  vehicle_flags;       // VEHICLE_FLAG_ARMED 等；bit1~7 预留填 0
-    int16_t  ax;                  // 机体加速度 cm/s²
+    int16_t  ax;                  // 机体加速度 cm/s²（AHRS：get_accel - bias）
     int16_t  ay;
     int16_t  az;
-    int16_t  gyro_x;              // 机体陀螺 0.01°/s，ArduPilot 原号
+    int16_t  gyro_x;              // 机体陀螺 0.01°/s（AHRS gyro_estimate）
     int16_t  gyro_y;
     int16_t  gyro_z;              // 0.01°/s；+右转 / -左转
     uint32_t enc_left;            // 左轮编码器累计 count（WENC0）
     uint32_t enc_right;           // 右轮编码器累计 count（WENC1）
+    int32_t  pos_n_cm;            // 相对 EKF 原点北向 cm；无效 0
+    int32_t  pos_e_cm;            // 相对 EKF 原点东向 cm；无效 0
 };
 static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
               "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");
