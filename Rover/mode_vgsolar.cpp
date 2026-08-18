@@ -437,6 +437,35 @@ void ModeVGSolar::read_companion_commands()
             hal.scheduler->reboot(false);
             break;
         // SYS_CMD_SHUTDOWN(0x04) 关机未实现
+        case SYS_CMD_ARM: {
+            // ACK = 执行结果；已解锁幂等成功；急停中拒绝；解除急停不自动解锁
+            uint8_t ack = CMD_ACK_FAILED;
+            if (_vg_submode == VGSubMode::ESTOP) {
+                gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: ARM rejected, ESTOP");
+            } else if (rover.arming.is_armed()) {
+                ack = CMD_ACK_SUCCESS;
+            } else if (rover.arming.arm(AP_Arming::Method::MAVLINK)) {
+                ack = CMD_ACK_SUCCESS;
+                gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: NCU ARM ok");
+            } else {
+                gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: NCU ARM failed");
+            }
+            cc.send_system_ctrl_ack(ack);
+            break;
+        }
+        case SYS_CMD_DISARM: {
+            uint8_t ack = CMD_ACK_FAILED;
+            if (!rover.arming.is_armed()) {
+                ack = CMD_ACK_SUCCESS;
+            } else if (rover.arming.disarm(AP_Arming::Method::MAVLINK)) {
+                ack = CMD_ACK_SUCCESS;
+                gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: NCU DISARM ok");
+            } else {
+                gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: NCU DISARM failed");
+            }
+            cc.send_system_ctrl_ack(ack);
+            break;
+        }
         default:
             break;
         }

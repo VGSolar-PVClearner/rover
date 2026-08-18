@@ -71,6 +71,7 @@
  *
  * --- 0x05 系统控制 (NCU_CMD_SYSTEM_CTRL, DATA_LENGTH = 0x01) ---
  * byte 5               command             0x01:急停  0x02:解除急停  0x03:重启  0x04:关机
+ *                                          0x05:解锁(ARM)  0x06:上锁(DISARM)；ARM/DISARM 的 ACK 由 Mode 按执行结果发
  * byte 6               Checksum
  * byte 7               end sign            0xFF
  *
@@ -108,7 +109,7 @@
 * byte 3               command content     见下表
 * byte 4               DATA_LENGTH         见下表
 *
-* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x22) ---
+* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x3F) ---
 * byte 5               battery_percent     电池电量 0~100 %
 * byte 6               longitude8          经度 int32 低 8 位 (×1e7)
 * byte 7               longitude16         经度 int32 8~15 位
@@ -143,8 +144,37 @@
 * byte 36              range_right_in_H
 * byte 37              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
 * byte 38              range_right_out_H
-* byte 39              Checksum
-* byte 40              end sign            0xFF
+* byte 39              vehicle_flags       bit0=1 已解锁 / 0 已上锁；bit1~7 预留
+* byte 40              ax_L                机体加速度 X int16, cm/s²（AHRS：IMU - bias）
+* byte 41              ax_H
+* byte 42              ay_L                机体加速度 Y int16, cm/s²
+* byte 43              ay_H
+* byte 44              az_L                机体加速度 Z int16, cm/s²
+* byte 45              az_H
+* byte 46              gyro_x_L            机体陀螺 X int16, 0.01°/s（AHRS gyro_estimate）
+* byte 47              gyro_x_H
+* byte 48              gyro_y_L            机体陀螺 Y int16, 0.01°/s
+* byte 49              gyro_y_H
+* byte 50              gyro_z_L            机体偏航角速度 int16, 0.01°/s；+右转 / -左转
+* byte 51              gyro_z_H
+* byte 52              enc_left8           左轮编码器累计 count uint32 低 8 位
+* byte 53              enc_left16
+* byte 54              enc_left24
+* byte 55              enc_left32
+* byte 56              enc_right8          右轮编码器累计 count uint32 低 8 位
+* byte 57              enc_right16
+* byte 58              enc_right24
+* byte 59              enc_right32
+* byte 60              pos_n8               相对 EKF 原点北向 int32 cm（无效 0）
+* byte 61              pos_n16
+* byte 62              pos_n24
+* byte 63              pos_n32
+* byte 64              pos_e8               相对 EKF 原点东向 int32 cm（无效 0）
+* byte 65              pos_e16
+* byte 66              pos_e24
+* byte 67              pos_e32
+* byte 68              Checksum
+* byte 69              end sign            0xFF
 *
 * 四路均在车头；仅 LEFT_OUT / RIGHT_OUT 接串口传感器。
 * ORIENT：LEFT_OUT=ROTATION_YAW_315(7)  RIGHT_OUT=ROTATION_YAW_45(1)
@@ -230,6 +260,8 @@ constexpr uint8_t SYS_CMD_ESTOP         = 0x01;
 constexpr uint8_t SYS_CMD_ESTOP_CLEAR   = 0x02;
 constexpr uint8_t SYS_CMD_REBOOT        = 0x03;
 constexpr uint8_t SYS_CMD_SHUTDOWN      = 0x04;
+constexpr uint8_t SYS_CMD_ARM           = 0x05;  // 解锁；ACK 由 Mode 按执行结果发送
+constexpr uint8_t SYS_CMD_DISARM        = 0x06;  // 上锁；ACK 由 Mode 按执行结果发送
 
 // 导航模式
 constexpr uint8_t NAV_MODE_GPS          = 0x01;
@@ -304,8 +336,11 @@ constexpr uint8_t NCU_DATA_LEN_POSITION     = 15;
 constexpr uint8_t NCU_RX_MAX_DATA_LEN  = NCU_DATA_LEN_POSITION;
 constexpr uint8_t COMPANION_RECV_TOTAL_LENGTH = FRAME_OVERHEAD + NCU_RX_MAX_DATA_LEN;
 
-constexpr uint8_t FCU_DATA_LEN_STATUS      = 34;  // 原 26 + 4×uint16 超声波 cm
+constexpr uint8_t FCU_DATA_LEN_STATUS      = 63;  // 55 + pos_n/pos_e (2*int32)
 constexpr uint16_t RANGE_INVALID_CM        = 0xFFFF;  // 测距无效/无传感器
+
+// 状态帧 vehicle_flags（IMU/编码器之前）
+constexpr uint8_t VEHICLE_FLAG_ARMED       = (1U << 0);  // 1=已解锁 soft_armed
 constexpr uint8_t FCU_DATA_LEN_CMD_ACK     = 2;
 constexpr uint8_t FCU_DATA_LEN_PARAM       = 7;
 constexpr uint8_t FCU_DATA_LEN_NAV_STATUS  = 8;  // nav_state+coord_mode+dist32+heading_err
@@ -378,7 +413,7 @@ struct ParamReadData {
 
 // NCU 0x05 系统控制数据体（1 字节）
 struct SystemCtrlData {
-    uint8_t command;  // SYS_CMD_ESTOP / ESTOP_CLEAR / REBOOT / SHUTDOWN
+    uint8_t command;  // SYS_CMD_ESTOP / ESTOP_CLEAR / REBOOT / SHUTDOWN / ARM / DISARM
 };
 
 // NCU 0x06 位置导航数据体（15 字节）
@@ -409,6 +444,17 @@ struct StatusFeedbackData {
     uint16_t range_left_in_cm;    // 左内：拷贝 left_out
     uint16_t range_right_in_cm;   // 右内：拷贝 right_out
     uint16_t range_right_out_cm;  // 右外 cm（真传感器）
+    uint8_t  vehicle_flags;       // VEHICLE_FLAG_ARMED 等；bit1~7 预留填 0
+    int16_t  ax;                  // 机体加速度 cm/s²（AHRS：get_accel - bias）
+    int16_t  ay;
+    int16_t  az;
+    int16_t  gyro_x;              // 机体陀螺 0.01°/s（AHRS gyro_estimate）
+    int16_t  gyro_y;
+    int16_t  gyro_z;              // 0.01°/s；+右转 / -左转
+    uint32_t enc_left;            // 左轮编码器累计 count（WENC0）
+    uint32_t enc_right;           // 右轮编码器累计 count（WENC1）
+    int32_t  pos_n_cm;            // 相对 EKF 原点北向 cm；无效 0
+    int32_t  pos_e_cm;            // 相对 EKF 原点东向 cm；无效 0
 };
 static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
               "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");

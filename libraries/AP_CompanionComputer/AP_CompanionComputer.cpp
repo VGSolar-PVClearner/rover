@@ -8,6 +8,7 @@
 #include <AP_RangeFinder/AP_RangeFinder_config.h>
 #include <AP_Math/AP_Math.h>
 #include <AP_Brush/AP_Brush.h>
+#include <AP_Arming/AP_Arming.h>
 
 // AP_CompanionComputer 实现：串口收发、NCU 指令解析、FCU 反馈组帧。
 // DataFlash 通信日志见 AP_CompanionComputer_Logging.cpp。
@@ -264,7 +265,7 @@ void AP_CompanionComputer::parse_param_read()
 
 void AP_CompanionComputer::parse_system_ctrl()
 {
-    // 仅缓存 + ACK + _estop_active；SYS_CMD_REBOOT/SHUTDOWN 由 ModeVGSolar 执行
+    // 缓存 + 急停标志；多数命令立即 ACK。ARM/DISARM 由 ModeVGSolar 按执行结果 ACK
     _latest_system_ctrl = PacketBuilder::deserialize<SystemCtrlData>(_rx_buffer.data() + 5);
     _new_cmd_flags |= (1<<3);
 
@@ -272,6 +273,11 @@ void AP_CompanionComputer::parse_system_ctrl()
         _estop_active = true;
     } else if (_latest_system_ctrl.command == SYS_CMD_ESTOP_CLEAR) {
         _estop_active = false;
+    }
+
+    if (_latest_system_ctrl.command == SYS_CMD_ARM ||
+        _latest_system_ctrl.command == SYS_CMD_DISARM) {
+        return;
     }
 
     send_response(NCU_CMD_SYSTEM_CTRL, CMD_ACK_SUCCESS);
@@ -287,6 +293,11 @@ void AP_CompanionComputer::parse_position()
 void AP_CompanionComputer::send_position_ack(uint8_t status)
 {
     send_response(NCU_CMD_POSITION, status);
+}
+
+void AP_CompanionComputer::send_system_ctrl_ack(uint8_t status)
+{
+    send_response(NCU_CMD_SYSTEM_CTRL, status);
 }
 
 void AP_CompanionComputer::set_nav_status(const NavStatusData &data, bool send_nav)
@@ -708,6 +719,44 @@ void AP_CompanionComputer::send_data()
     status_data.range_right_in_cm = RANGE_INVALID_CM;
     status_data.range_right_out_cm = RANGE_INVALID_CM;
 #endif
+
+    // bit0：已解锁（遥控/GCS/NCU ARM 均可置位；与 arming.is_armed() 一致）
+    status_data.vehicle_flags = 0;
+    if (AP::arming().is_armed()) {
+        status_data.vehicle_flags |= VEHICLE_FLAG_ARMED;
+    }
+
+    // 机体 IMU（AHRS 融合路径）：accel = INS - bias；gyro = gyro_estimate
+    // gyro_z：+右转 / -左转
+    const Vector3f &gyro = ahrs.get_gyro();
+    const Vector3f accel = ahrs.get_accel() - ahrs.get_accel_bias();
+    status_data.ax = constrain_int16(int16_t(lroundf(accel.x * 100.0f)), -32767, 32767);
+    status_data.ay = constrain_int16(int16_t(lroundf(accel.y * 100.0f)), -32767, 32767);
+    status_data.az = constrain_int16(int16_t(lroundf(accel.z * 100.0f)), -32767, 32767);
+    status_data.gyro_x = constrain_int16(int16_t(lroundf(degrees(gyro.x) * 100.0f)), -32767, 32767);
+    status_data.gyro_y = constrain_int16(int16_t(lroundf(degrees(gyro.y) * 100.0f)), -32767, 32767);
+    status_data.gyro_z = constrain_int16(int16_t(lroundf(degrees(gyro.z) * 100.0f)), -32767, 32767);
+
+    // 左右轮编码器累计脉冲；未配置则为 0
+    status_data.enc_left = 0;
+    status_data.enc_right = 0;
+    if (wenc != nullptr) {
+        if (wenc->num_sensors() > 0 && wenc->enabled(0)) {
+            status_data.enc_left = wenc->get_total_count(0);
+        }
+        if (wenc->num_sensors() > 1 && wenc->enabled(1)) {
+            status_data.enc_right = wenc->get_total_count(1);
+        }
+    }
+
+    // 相对 EKF 原点北/东 (cm)；无原点或定位无效时为 0
+    status_data.pos_n_cm = 0;
+    status_data.pos_e_cm = 0;
+    Vector2f pos_ne_m;
+    if (ahrs.get_relative_position_NE_origin(pos_ne_m)) {
+        status_data.pos_n_cm = int32_t(lroundf(pos_ne_m.x * 100.0f));
+        status_data.pos_e_cm = int32_t(lroundf(pos_ne_m.y * 100.0f));
+    }
 
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];
     const size_t frame_len = build_frame(FCU_FB_STATUS,
