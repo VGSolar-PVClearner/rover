@@ -1,9 +1,9 @@
-# setup correct defaults for battery monitoring for holybro power brick
-BATT_MONITOR 4
-
-BATT_CURR_PIN 18
-
+# VGSolar board-level defaults.
+# Vehicle configuration, including battery calibration, is included below.
 BATT2_CURR_PIN -1
 BATT3_CURR_PIN 11
 BATT4_CURR_PIN 8
 BATT5_CURR_PIN 9
+
+# Generated from the Mission Planner parameter export for this vehicle.
+@include vehicle-defaults.parm

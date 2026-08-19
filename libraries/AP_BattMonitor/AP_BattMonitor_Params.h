@@ -17,6 +17,10 @@ public:
         BattMonitor_LowVoltageSource_Raw            = 0,
         BattMonitor_LowVoltageSource_SagCompensated = 1
     };
+    enum class PercentageSource : int8_t {
+        ConsumedMah = 0,
+        Voltage = 1,
+    };
     enum class Options : uint16_t {
         Ignore_UAVCAN_SoC                   = (1U<<0),  // Ignore UAVCAN State-of-Charge (charge %) supplied value from the device and use the internally calculated one
         MPPT_Use_Input_Value                = (1U<<1),  // MPPT reports voltage and current from Input (usually solar panel) instead of the output
@@ -31,6 +35,7 @@ public:
     };
 
     BattMonitor_LowVoltage_Source failsafe_voltage_source(void) const { return (enum BattMonitor_LowVoltage_Source)_failsafe_voltage_source.get(); }
+    PercentageSource percentage_source(void) const { return (PercentageSource)_percentage_source.get(); }
 
     AP_Int32 _pack_capacity;            /// battery pack capacity less reserve in mAh
     AP_Int32 _serial_number;            /// battery serial number, automatically filled in on SMBus batteries
@@ -49,6 +54,9 @@ public:
     AP_Int8  _failsafe_voltage_source;  /// voltage type used for detection of low voltage event
     AP_Int8  _failsafe_low_action;      /// action to preform on a low battery failsafe
     AP_Int8  _failsafe_critical_action; /// action to preform on a critical battery failsafe
+    AP_Int8  _percentage_source;        /// source used for the remaining percentage calculation
+    AP_Float _percentage_voltage_max;   /// voltage that represents 100 percent remaining
+    AP_Float _percentage_voltage_min;   /// voltage that represents 0 percent remaining
 #if AP_BATTERY_ESC_TELEM_OUTBOUND_ENABLED
     AP_Int8  _esc_telem_outbound_index; /// bitmask of ESCs to forward voltage, current, consumption and temperature to.
 #endif
