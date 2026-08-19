@@ -412,7 +412,8 @@ private:
     void startup_INS(void);
     void notify_mode(const Mode *new_mode);
     void receive_companion_computer();
-    void send2_companion_computer();
+    void send2_companion_status();
+    void send2_companion_motion();
     uint8_t check_digital_pin(uint8_t pin);
     bool should_log(uint32_t mask);
     bool is_boat() const;

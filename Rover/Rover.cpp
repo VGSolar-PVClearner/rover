@@ -140,11 +140,12 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
 #if AP_ROVER_ADVANCED_FAILSAFE_ENABLED
     SCHED_TASK(afs_fs_check,           10,    200, 129),
 #endif
-    // NCU 伴机串口：收 50Hz / 发 10Hz
+    // NCU 伴机串口：收 50Hz；状态 10Hz；运动 50Hz（优先级低于 send2，同拍先发 0x01）
     SCHED_TASK(receive_companion_computer,  50,    200,  172),
-    SCHED_TASK(send2_companion_computer,    10,     50,  173),
+    SCHED_TASK(send2_companion_status,      10,     50,  173),
+    SCHED_TASK(send2_companion_motion,      50,    100,  174),
 #if AP_ESC_TELEM_2BLD6010_ENABLED
-    SCHED_TASK_CLASS(AP_ESC_Telem_2BLD6010, &rover.g2.esc_telem_2bld6010, update, 100, 150, 174),
+    SCHED_TASK_CLASS(AP_ESC_Telem_2BLD6010, &rover.g2.esc_telem_2bld6010, update, 100, 150, 175),
 #endif
 };
 
@@ -173,7 +174,7 @@ void Rover::receive_companion_computer()
 #endif
 }
 
-void Rover::send2_companion_computer()
+void Rover::send2_companion_status()
 {
 #if MODE_VGSOLAR_ENABLED
     if (control_mode == &mode_vgsolar) {
@@ -183,6 +184,11 @@ void Rover::send2_companion_computer()
 #endif
     companion_computer.send_data();     // FCU → NCU 状态反馈 0xBB 0x01
     companion_computer.send_nav_data(); // FCU → NCU 导航状态 0xBB 0x04（Mode 置位后生效）
+}
+
+void Rover::send2_companion_motion()
+{
+    companion_computer.send_motion_data();  // FCU → NCU 运动反馈 0xBB 0x05
 }
 
 constexpr int8_t Rover::_failsafe_priorities[7];

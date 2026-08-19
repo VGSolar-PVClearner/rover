@@ -109,7 +109,7 @@
 * byte 3               command content     见下表
 * byte 4               DATA_LENGTH         见下表
 *
-* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x3F) ---
+* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x1B) ---
 * byte 5               battery_percent     电池电量 0~100 %
 * byte 6               longitude8          经度 int32 低 8 位 (×1e7)
 * byte 7               longitude16         经度 int32 8~15 位
@@ -119,65 +119,69 @@
 * byte 11              latitude16          纬度 int32 8~15 位
 * byte 12              latitude24          纬度 int32 16~23 位
 * byte 13              latitude32          纬度 int32 高 8 位
-* byte 14              heading_L           航向角 uint16 低 8 位, 0.01° (0~36000)
-* byte 15              heading_H           航向角 uint16 高 8 位
-* byte 16              velocity_L          地速 int16 低 8 位, cm/s
-* byte 17              velocity_H          地速 int16 高 8 位
-* byte 18              left_track_vel_L    左履带速度 int16 低 8 位, cm/s (WENC)
-* byte 19              left_track_vel_H    左履带速度 int16 高 8 位
-* byte 20              right_track_vel_L   右履带速度 int16 低 8 位, cm/s (WENC2)
-* byte 21              right_track_vel_H   右履带速度 int16 高 8 位
-* byte 22              roll_L              横滚 int16 低 8 位, 0.01°
-* byte 23              roll_H              横滚 int16 高 8 位
-* byte 24              pitch_L             俯仰 int16 低 8 位, 0.01°
-* byte 25              pitch_H             俯仰 int16 高 8 位
-* byte 26              control_mode        控制模式 (ControlMode 枚举)
-* byte 27              motion_state        运动状态 (MotionState 枚举)
-* byte 28              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
-* byte 29              fault_code_H        故障码 uint16 高 8 位
-* byte 30              gps_status          GPS 定位状态
-* byte 31              range_left_out_L    左外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
-* byte 32              range_left_out_H
-* byte 33              range_left_in_L     左内：拷贝 LEFT_OUT
-* byte 34              range_left_in_H
-* byte 35              range_right_in_L    右内：拷贝 RIGHT_OUT
-* byte 36              range_right_in_H
-* byte 37              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
-* byte 38              range_right_out_H
-* byte 39              vehicle_flags       bit0=1 已解锁 / 0 已上锁；bit1~7 预留
-* byte 40              ax_L                机体加速度 X int16, cm/s²（AHRS：IMU - bias）
-* byte 41              ax_H
-* byte 42              ay_L                机体加速度 Y int16, cm/s²
-* byte 43              ay_H
-* byte 44              az_L                机体加速度 Z int16, cm/s²
-* byte 45              az_H
-* byte 46              gyro_x_L            机体陀螺 X int16, 0.01°/s（AHRS gyro_estimate）
-* byte 47              gyro_x_H
-* byte 48              gyro_y_L            机体陀螺 Y int16, 0.01°/s
-* byte 49              gyro_y_H
-* byte 50              gyro_z_L            机体偏航角速度 int16, 0.01°/s；+右转 / -左转
-* byte 51              gyro_z_H
-* byte 52              enc_left8           左轮编码器累计 count uint32 低 8 位
-* byte 53              enc_left16
-* byte 54              enc_left24
-* byte 55              enc_left32
-* byte 56              enc_right8          右轮编码器累计 count uint32 低 8 位
-* byte 57              enc_right16
-* byte 58              enc_right24
-* byte 59              enc_right32
-* byte 60              pos_n8               相对 EKF 原点北向 int32 cm（无效 0）
-* byte 61              pos_n16
-* byte 62              pos_n24
-* byte 63              pos_n32
-* byte 64              pos_e8               相对 EKF 原点东向 int32 cm（无效 0）
-* byte 65              pos_e16
-* byte 66              pos_e24
-* byte 67              pos_e32
-* byte 68              Checksum
-* byte 69              end sign            0xFF
+* byte 14              roll_L              横滚 int16 低 8 位, 0.01°
+* byte 15              roll_H              横滚 int16 高 8 位
+* byte 16              pitch_L             俯仰 int16 低 8 位, 0.01°
+* byte 17              pitch_H             俯仰 int16 高 8 位
+* byte 18              control_mode        控制模式 (ControlMode 枚举)
+* byte 19              motion_state        运动状态 (MotionState 枚举)
+* byte 20              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
+* byte 21              fault_code_H        故障码 uint16 高 8 位
+* byte 22              gps_status          GPS 定位状态
+* byte 23              range_left_out_L    左外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
+* byte 24              range_left_out_H
+* byte 25              range_left_in_L     左内：拷贝 LEFT_OUT
+* byte 26              range_left_in_H
+* byte 27              range_right_in_L    右内：拷贝 RIGHT_OUT
+* byte 28              range_right_in_H
+* byte 29              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
+* byte 30              range_right_out_H
+* byte 31              vehicle_flags       bit0=1 已解锁 / 0 已上锁；bit1~7 预留
+* byte 32              Checksum
+* byte 33              end sign            0xFF
 *
 * 四路均在车头；仅 LEFT_OUT / RIGHT_OUT 接串口传感器。
 * ORIENT：LEFT_OUT=ROTATION_YAW_315(7)  RIGHT_OUT=ROTATION_YAW_45(1)
+*
+* --- 0x05 运动反馈 (FCU_FB_MOTION, 50Hz, DATA_LENGTH = 0x24) ---
+* byte 5               heading_L           航向角 uint16 低 8 位, 0.01° (0~36000)
+* byte 6               heading_H
+* byte 7               velocity_L          地速 int16 低 8 位, cm/s
+* byte 8               velocity_H
+* byte 9               left_track_vel_L    左履带速度 int16 低 8 位, cm/s (WENC)
+* byte 10              left_track_vel_H
+* byte 11              right_track_vel_L   右履带速度 int16 低 8 位, cm/s (WENC2)
+* byte 12              right_track_vel_H
+* byte 13              ax_L                机体加速度 X int16, cm/s²（AHRS：IMU - bias）
+* byte 14              ax_H
+* byte 15              ay_L                机体加速度 Y int16, cm/s²
+* byte 16              ay_H
+* byte 17              az_L                机体加速度 Z int16, cm/s²
+* byte 18              az_H
+* byte 19              gyro_x_L            机体陀螺 X int16, 0.01°/s（AHRS gyro_estimate）
+* byte 20              gyro_x_H
+* byte 21              gyro_y_L            机体陀螺 Y int16, 0.01°/s
+* byte 22              gyro_y_H
+* byte 23              gyro_z_L            机体偏航角速度 int16, 0.01°/s；+右转 / -左转
+* byte 24              gyro_z_H
+* byte 25              enc_left8           左轮编码器累计 count uint32 低 8 位(暂定)
+* byte 26              enc_left16
+* byte 27              enc_left24
+* byte 28              enc_left32
+* byte 29              enc_right8          右轮编码器累计 count uint32 低 8 位
+* byte 30              enc_right16
+* byte 31              enc_right24
+* byte 32              enc_right32
+* byte 33              pos_n8              相对 EKF 原点北向 int32 cm（无效 0）
+* byte 34              pos_n16
+* byte 35              pos_n24
+* byte 36              pos_n32
+* byte 37              pos_e8              相对 EKF 原点东向 int32 cm（无效 0）
+* byte 38              pos_e16
+* byte 39              pos_e24
+* byte 40              pos_e32
+* byte 41              Checksum
+* byte 42              end sign            0xFF
 *
 * --- 0x02 指令应答 (FCU_FB_CMD_ACK, DATA_LENGTH = 0x02, 整帧 0x09 字节) ---
 * byte 5               cmd_type            对应的 NCU 指令类型
@@ -239,6 +243,7 @@ constexpr uint8_t FCU_FB_STATUS        = 0x01;
 constexpr uint8_t FCU_FB_CMD_ACK       = 0x02;
 constexpr uint8_t FCU_FB_PARAM         = 0x03;
 constexpr uint8_t FCU_FB_NAV_STATUS    = 0x04;
+constexpr uint8_t FCU_FB_MOTION        = 0x05;  // 与 NCU_CMD_SYSTEM_CTRL 同号；靠 source=0xBB 区分
 
 // 速度控制模式
 constexpr uint8_t SPEED_MODE_YAW        = 0x01;
@@ -336,21 +341,23 @@ constexpr uint8_t NCU_DATA_LEN_POSITION     = 15;
 constexpr uint8_t NCU_RX_MAX_DATA_LEN  = NCU_DATA_LEN_POSITION;
 constexpr uint8_t COMPANION_RECV_TOTAL_LENGTH = FRAME_OVERHEAD + NCU_RX_MAX_DATA_LEN;
 
-constexpr uint8_t FCU_DATA_LEN_STATUS      = 63;  // 55 + pos_n/pos_e (2*int32)
+constexpr uint8_t FCU_DATA_LEN_STATUS      = 27;  // 车控心跳；航向/速度/IMU/enc/XY 在 0x05
 constexpr uint16_t RANGE_INVALID_CM        = 0xFFFF;  // 测距无效/无传感器
 
-// 状态帧 vehicle_flags（IMU/编码器之前）
+// 状态帧 vehicle_flags
 constexpr uint8_t VEHICLE_FLAG_ARMED       = (1U << 0);  // 1=已解锁 soft_armed
 constexpr uint8_t FCU_DATA_LEN_CMD_ACK     = 2;
 constexpr uint8_t FCU_DATA_LEN_PARAM       = 7;
 constexpr uint8_t FCU_DATA_LEN_NAV_STATUS  = 8;  // nav_state+coord_mode+dist32+heading_err
+constexpr uint8_t FCU_DATA_LEN_MOTION      = 36;  // heading + 地速/轮速 + IMU + enc + pos_n/pos_e
 
-constexpr uint8_t FCU_TX_MAX_DATA_LEN  = FCU_DATA_LEN_STATUS;
+constexpr uint8_t FCU_TX_MAX_DATA_LEN  = FCU_DATA_LEN_MOTION;
 constexpr uint8_t COMPANION_SEND_TOTAL_LENGTH = FRAME_OVERHEAD + FCU_TX_MAX_DATA_LEN;
 
 constexpr uint8_t COMPANION_SEND_RESP_LENGTH  = 0x09;
 constexpr uint8_t COMPANION_SEND_PARAM_LENGTH = FRAME_OVERHEAD + FCU_DATA_LEN_PARAM;
 constexpr uint8_t COMPANION_SEND_NAV_LENGTH   = FRAME_OVERHEAD + FCU_DATA_LEN_NAV_STATUS;
+constexpr uint8_t COMPANION_SEND_MOTION_LENGTH = FRAME_OVERHEAD + FCU_DATA_LEN_MOTION;
 
 constexpr uint32_t PACKET_TIMEOUT_MS        = 200;
 // 非零速度后无新速度帧超过此时长则停车（丢控兜底，不置 fault bit7）
@@ -430,10 +437,6 @@ struct StatusFeedbackData {
     uint8_t  battery_percent;  // 电池电量百分比
     int32_t  longitude;        // 度×1e7
     int32_t  latitude;
-    uint16_t heading;          // 0~36000, 0.01°；与 ahrs.yaw_sensor（厘度）同语义
-    int16_t  velocity;         // 地速 cm/s（AHRS groundspeed）
-    int16_t  left_track_vel;   // WENC instance 0
-    int16_t  right_track_vel;  // WENC2 instance 1
     int16_t  roll;             // 0.01°
     int16_t  pitch;
     uint8_t  control_mode;     // ControlMode；非 VGSL 时 STANDBY
@@ -445,6 +448,16 @@ struct StatusFeedbackData {
     uint16_t range_right_in_cm;   // 右内：拷贝 right_out
     uint16_t range_right_out_cm;  // 右外 cm（真传感器）
     uint8_t  vehicle_flags;       // VEHICLE_FLAG_ARMED 等；bit1~7 预留填 0
+};
+static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
+              "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");
+
+// FCU 0x05 运动反馈（36 字节，50Hz）
+struct MotionFeedbackData {
+    uint16_t heading;             // 0~36000, 0.01°；ahrs.yaw_sensor
+    int16_t  velocity;            // 地速 cm/s（AHRS groundspeed）
+    int16_t  left_track_vel;      // WENC instance 0
+    int16_t  right_track_vel;     // WENC2 instance 1
     int16_t  ax;                  // 机体加速度 cm/s²（AHRS：get_accel - bias）
     int16_t  ay;
     int16_t  az;
@@ -456,8 +469,8 @@ struct StatusFeedbackData {
     int32_t  pos_n_cm;            // 相对 EKF 原点北向 cm；无效 0
     int32_t  pos_e_cm;            // 相对 EKF 原点东向 cm；无效 0
 };
-static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
-              "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");
+static_assert(sizeof(MotionFeedbackData) == FCU_DATA_LEN_MOTION,
+              "MotionFeedbackData size must match FCU_DATA_LEN_MOTION");
 
 // FCU 0x02 指令应答数据体（2 字节）
 struct CmdAckData {

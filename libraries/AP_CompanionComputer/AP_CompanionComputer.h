@@ -14,16 +14,17 @@
  *   ModeVGSolar：运动控制、子模式状态机、心跳超时、吸盘/导航/转弯执行。
  *
  * 调度（Rover.cpp）：
- *   50Hz  receive_companion_computer() → update()        收 NCU 帧
- *   10Hz  send2_companion_computer()   → publish_*()     Mode 写入模式侧字段
- *                                       → send_data()     0xBB 0x01 状态反馈
- *                                       → send_nav_data() 0xBB 0x04 导航状态  （导航现在用不到）
+ *   50Hz  receive_companion_computer() → update()             收 NCU 帧
+ *   10Hz  send2_companion_status()     → publish_*()          Mode 写入模式侧字段
+ *                                       → send_data()          0xBB 0x01 状态反馈
+ *                                       → send_nav_data()      0xBB 0x04 导航状态（实际上不用）
+ *   50Hz  send2_companion_motion()     → send_motion_data()   0xBB 0x05 运动反馈
  *
  * DataFlash 通信日志：AP_CompanionComputer_Logging.cpp（CC_LOG）
  *
  * 上行发送时机：
  *   事件帧 0x02/0x03 — parse_* 或 Mode 调用时立即 send_frame(EVENT)
- *   周期帧 0x01/0x04 — 10Hz 任务内 send_frame(PERIODIC)
+ *   周期帧 0x01/0x04/0x05 — PERIODIC；同拍时调度先 10Hz（0x01）再 50Hz（0x05）
  */
 class AP_CompanionComputer
 {
@@ -41,7 +42,8 @@ public:
 
     void init();   // 初始化串口
     void update(); // 解析NCU数据
-    void send_data(); // 发送FCU状态
+    void send_data();          // 10Hz 0xBB 0x01 状态反馈
+    void send_motion_data();   // 50Hz 0xBB 0x05 运动反馈（heading/速度/IMU/enc/XY）
 
     // ModeVGSolar 导航 ACK（0xBB 0x02，cmd_type=NCU_CMD_POSITION）
     void send_position_ack(uint8_t status);
@@ -136,7 +138,7 @@ private:
 
     enum class TxPriority : uint8_t {
         EVENT,    // 0x02/0x03：按需即时；tx 满时仍尝试写并计 _tx_drop_event
-        PERIODIC, // 0x01/0x04：10Hz；tx 满时丢弃本帧并计 _tx_drop_periodic
+        PERIODIC, // 0x01/0x04/0x05：tx 满时丢弃本帧并计 _tx_drop_periodic
     };
 
     // Parameters
@@ -159,7 +161,8 @@ private:
     std::array<uint8_t, COMPANION_RECV_TOTAL_LENGTH> _rx_buffer;
     uint8_t _rx_count;
     uint32_t _rx_start_time;
-    uint32_t _last_sent_ms;  // send_data 10Hz 限速
+    uint32_t _last_sent_ms;         // send_data 10Hz 限速
+    uint32_t _last_motion_sent_ms;  // send_motion_data 50Hz 限速
     uint16_t _tx_drop_event;
     uint16_t _tx_drop_periodic;
 

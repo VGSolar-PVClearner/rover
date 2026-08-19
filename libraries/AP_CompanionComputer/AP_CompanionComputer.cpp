@@ -44,6 +44,7 @@ AP_CompanionComputer::AP_CompanionComputer() :
     _rx_count(0),
     _uart(nullptr),
     _last_sent_ms(0),
+    _last_motion_sent_ms(0),
     _tx_drop_event(0),
     _tx_drop_periodic(0),
     // NCLK 秒窗计数 / NSPD 降频状态
@@ -85,7 +86,7 @@ void AP_CompanionComputer::init()
     // 查找第 CC_PORT 个 protocol=50 的串口
     _uart = AP::serialmanager().find_serial(AP_SerialManager::SerialProtocol_2CC, _port_index.get());
     if (_uart != nullptr) {
-        _uart->begin(115200, 512, 128);
+        _uart->begin(115200, 512, 1024);
     }
 }
 
@@ -664,35 +665,12 @@ void AP_CompanionComputer::send_data()
         status_data.latitude = loc.lat;
     }
 
-    // 航向 (0.01°, 0~36000)；yaw_sensor 已为同单位厘度 [0, 36000)
-    status_data.heading = (uint16_t)ahrs.yaw_sensor;
-
-    // 线速度 (cm/s)
-    const int16_t velocity_cms = constrain_int16(int16_t(lroundf(ahrs.groundspeed() * 100.0f)), -32767, 32767);
-    status_data.velocity = velocity_cms;
-
-    // 左右履带速度 (cm/s)
-    AP_WheelEncoder *wenc = AP::wheelencoder();
-    if (wenc != nullptr) {
-        for (uint8_t i = 0; i < MIN(2U, wenc->num_sensors()); i++) {
-            if (!wenc->enabled(i) || !wenc->healthy(i)) {
-                continue;
-            }
-            const float rate_mps = wenc->get_rate(i) * wenc->get_wheel_radius(i);
-            const int16_t vel_cms = constrain_int16(int16_t(lroundf(rate_mps * 100.0f)), -32767, 32767);
-            if (i == 0) {
-                status_data.left_track_vel = vel_cms;
-            } else {
-                status_data.right_track_vel = vel_cms;
-            }
-        }
-    }
-
     // 横滚 / 俯仰 (0.01°)
     status_data.roll = constrain_int16(int16_t(lroundf(degrees(ahrs.get_roll()) * 100.0f)), -32767, 32767);
     status_data.pitch = constrain_int16(int16_t(lroundf(degrees(ahrs.get_pitch()) * 100.0f)), -32767, 32767);
 
-    // 控制模式 / 运动状态 / 故障码
+    // 控制模式 / 运动状态 / 故障码（地速仅用于 motion_state，上报在 0x05）
+    const int16_t velocity_cms = constrain_int16(int16_t(lroundf(ahrs.groundspeed() * 100.0f)), -32767, 32767);
     const uint8_t control_mode = _fb_mode_status_valid ? _fb_control_mode : uint8_t(ControlMode::STANDBY);
     const bool estop = _fb_estop || _estop_active;
     const bool turning = _fb_turning;
@@ -726,38 +704,6 @@ void AP_CompanionComputer::send_data()
         status_data.vehicle_flags |= VEHICLE_FLAG_ARMED;
     }
 
-    // 机体 IMU（AHRS 融合路径）：accel = INS - bias；gyro = gyro_estimate
-    // gyro_z：+右转 / -左转
-    const Vector3f &gyro = ahrs.get_gyro();
-    const Vector3f accel = ahrs.get_accel() - ahrs.get_accel_bias();
-    status_data.ax = constrain_int16(int16_t(lroundf(accel.x * 100.0f)), -32767, 32767);
-    status_data.ay = constrain_int16(int16_t(lroundf(accel.y * 100.0f)), -32767, 32767);
-    status_data.az = constrain_int16(int16_t(lroundf(accel.z * 100.0f)), -32767, 32767);
-    status_data.gyro_x = constrain_int16(int16_t(lroundf(degrees(gyro.x) * 100.0f)), -32767, 32767);
-    status_data.gyro_y = constrain_int16(int16_t(lroundf(degrees(gyro.y) * 100.0f)), -32767, 32767);
-    status_data.gyro_z = constrain_int16(int16_t(lroundf(degrees(gyro.z) * 100.0f)), -32767, 32767);
-
-    // 左右轮编码器累计脉冲；未配置则为 0
-    status_data.enc_left = 0;
-    status_data.enc_right = 0;
-    if (wenc != nullptr) {
-        if (wenc->num_sensors() > 0 && wenc->enabled(0)) {
-            status_data.enc_left = wenc->get_total_count(0);
-        }
-        if (wenc->num_sensors() > 1 && wenc->enabled(1)) {
-            status_data.enc_right = wenc->get_total_count(1);
-        }
-    }
-
-    // 相对 EKF 原点北/东 (cm)；无原点或定位无效时为 0
-    status_data.pos_n_cm = 0;
-    status_data.pos_e_cm = 0;
-    Vector2f pos_ne_m;
-    if (ahrs.get_relative_position_NE_origin(pos_ne_m)) {
-        status_data.pos_n_cm = int32_t(lroundf(pos_ne_m.x * 100.0f));
-        status_data.pos_e_cm = int32_t(lroundf(pos_ne_m.y * 100.0f));
-    }
-
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];
     const size_t frame_len = build_frame(FCU_FB_STATUS,
                                          reinterpret_cast<const uint8_t *>(&status_data),
@@ -769,6 +715,80 @@ void AP_CompanionComputer::send_data()
 
     if (send_frame(packet, frame_len, TxPriority::PERIODIC)) {
         _last_sent_ms = now;
+    }
+}
+
+// 50Hz 运动反馈 0xBB 0x05（heading / 地速 / 轮速 / IMU / enc / EKF XY）
+void AP_CompanionComputer::send_motion_data()
+{
+    if (!_enable || _uart == nullptr) {
+        return;
+    }
+
+    const uint32_t now = AP_HAL::millis();
+    if (now - _last_motion_sent_ms < 20) {  // 50Hz
+        return;
+    }
+
+    MotionFeedbackData motion {};
+    const AP_AHRS &ahrs = AP::ahrs();
+
+    motion.heading = (uint16_t)ahrs.yaw_sensor;
+    motion.velocity = constrain_int16(int16_t(lroundf(ahrs.groundspeed() * 100.0f)), -32767, 32767);
+
+    const Vector3f &gyro = ahrs.get_gyro();
+    const Vector3f accel = ahrs.get_accel() - ahrs.get_accel_bias();
+    motion.ax = constrain_int16(int16_t(lroundf(accel.x * 100.0f)), -32767, 32767);
+    motion.ay = constrain_int16(int16_t(lroundf(accel.y * 100.0f)), -32767, 32767);
+    motion.az = constrain_int16(int16_t(lroundf(accel.z * 100.0f)), -32767, 32767);
+    motion.gyro_x = constrain_int16(int16_t(lroundf(degrees(gyro.x) * 100.0f)), -32767, 32767);
+    motion.gyro_y = constrain_int16(int16_t(lroundf(degrees(gyro.y) * 100.0f)), -32767, 32767);
+    motion.gyro_z = constrain_int16(int16_t(lroundf(degrees(gyro.z) * 100.0f)), -32767, 32767);
+
+    motion.enc_left = 0;
+    motion.enc_right = 0;
+    AP_WheelEncoder *wenc = AP::wheelencoder();
+    if (wenc != nullptr) {
+        for (uint8_t i = 0; i < MIN(2U, wenc->num_sensors()); i++) {
+            if (!wenc->enabled(i)) {
+                continue;
+            }
+            if (wenc->healthy(i)) {
+                const float rate_mps = wenc->get_rate(i) * wenc->get_wheel_radius(i);
+                const int16_t vel_cms = constrain_int16(int16_t(lroundf(rate_mps * 100.0f)), -32767, 32767);
+                if (i == 0) {
+                    motion.left_track_vel = vel_cms;
+                } else {
+                    motion.right_track_vel = vel_cms;
+                }
+            }
+            if (i == 0) {
+                motion.enc_left = wenc->get_total_count(0);
+            } else if (i == 1) {
+                motion.enc_right = wenc->get_total_count(1);
+            }
+        }
+    }
+
+    motion.pos_n_cm = 0;
+    motion.pos_e_cm = 0;
+    Vector2f pos_ne_m;
+    if (ahrs.get_relative_position_NE_origin(pos_ne_m)) {
+        motion.pos_n_cm = int32_t(lroundf(pos_ne_m.x * 100.0f));
+        motion.pos_e_cm = int32_t(lroundf(pos_ne_m.y * 100.0f));
+    }
+
+    uint8_t packet[COMPANION_SEND_MOTION_LENGTH];
+    const size_t frame_len = build_frame(FCU_FB_MOTION,
+                                         reinterpret_cast<const uint8_t *>(&motion),
+                                         sizeof(MotionFeedbackData),
+                                         packet, sizeof(packet));
+    if (frame_len == 0) {
+        return;
+    }
+
+    if (send_frame(packet, frame_len, TxPriority::PERIODIC)) {
+        _last_motion_sent_ms = now;
     }
 }
 
