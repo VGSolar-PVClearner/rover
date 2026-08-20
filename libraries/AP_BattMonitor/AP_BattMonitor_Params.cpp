@@ -169,6 +169,31 @@ const AP_Param::GroupInfo AP_BattMonitor_Params::var_info[] = {
     AP_GROUPINFO("ESC_INDEX", 22, AP_BattMonitor_Params, _esc_telem_outbound_index, 0),
 #endif
 
+    // @Param: PCT_SRC
+    // @DisplayName: Battery percentage source
+    // @Description: Selects whether remaining battery percentage is calculated from consumed capacity or linearly from the configured battery voltage range.
+    // @Values: 0:Consumed mAh,1:Battery voltage
+    // @User: Standard
+    AP_GROUPINFO("PCT_SRC", 23, AP_BattMonitor_Params, _percentage_source, int8_t(PercentageSource::ConsumedMah)),
+
+    // @Param: PCT_VMAX
+    // @DisplayName: Battery percentage maximum voltage
+    // @Description: Battery pack voltage that represents 100 percent remaining when PCT_SRC is set to Battery voltage. Must be greater than PCT_VMIN. Higher measured voltages are clamped to 100 percent.
+    // @Units: V
+    // @Range: 0.1 100
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("PCT_VMAX", 24, AP_BattMonitor_Params, _percentage_voltage_max, 0),
+
+    // @Param: PCT_VMIN
+    // @DisplayName: Battery percentage minimum voltage
+    // @Description: Battery pack voltage that represents 0 percent remaining when PCT_SRC is set to Battery voltage. Must be lower than PCT_VMAX. Lower measured voltages are clamped to 0 percent.
+    // @Units: V
+    // @Range: 0.1 100
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("PCT_VMIN", 25, AP_BattMonitor_Params, _percentage_voltage_min, 0),
+
     AP_GROUPEND
 
 };

@@ -7,17 +7,17 @@
 
 | 功能 | 当前推荐逻辑参数 | 软件状态 | 硬件备注 |
 | --- | --- | --- | --- |
-| 左履带 | `SERVO1_FUNCTION=73` | 已接入 VGSL/ModeGuided | 物理输出表仍记录为 PE13/TIM1_CH3/PWM(3)，需源码和实板确认逻辑通道映射 |
-| 右履带 | `SERVO3_FUNCTION=74` | 已接入 VGSL/ModeGuided | 物理输出表仍记录为 PE14/TIM1_CH4/PWM(4) |
-| 前滚刷 | `SERVO2_FUNCTION=157` | `AP_Brush` 已实现 | 物理输出 PC8/TIM8_CH3 |
-| 后滚刷 | `SERVO4_FUNCTION=158` | `AP_Brush` 已实现 | 物理输出 PD15/TIM4_CH4 |
+| 左履带 | `SERVO3_FUNCTION=73`、`SERVO3_REVERSED=1` | 已接入 VGSL/ModeGuided | PE13/TIM1_CH3/PWM(3)；项目固定方向 |
+| 右履带 | `SERVO4_FUNCTION=74` | 已接入 VGSL/ModeGuided | PE14/TIM1_CH4/PWM(4) |
+| 前滚刷 | `SERVO9_FUNCTION=157` | `AP_Brush` 已实现 | PC8/TIM8_CH3/PWM(9) |
+| 后滚刷 | `SERVO6_FUNCTION=158` | `AP_Brush` 已实现 | PD15/TIM4_CH4/PWM(6) |
 | 吸盘升降 | `SERVO5_FUNCTION=159` | `AP_SuctionCup` 已实现 | PD14/TIM4_CH3 |
-| 气阀 | `RELAY1_PIN=59` 或自定义 GPIO 控制 | IO 资源已改为 GPIO | PE5/GPIO59，默认低电平关闭；`AP_SuctionCup` 需同步改为 GPIO/Relay 控制 |
+| 气阀 | `RELAY1_PIN=59`、`RELAY1_INVERTED=1` | IO 资源已改为 GPIO | PE5/GPIO59；逻辑 ON 输出低电平、逻辑 OFF 输出高电平 |
 | 气泵 | `RELAY2_PIN=60` 或自定义 GPIO 控制 | IO 资源已改为 GPIO | PE6/GPIO60，只支持启停，不再支持 PWM 调速；`AP_SuctionCup` 需同步改为 GPIO/Relay 控制 |
 | 数传模块 | MCU `UART5`，对应 `SERIAL2_PROTOCOL=2` | 目标分配已确认 | `PC12/PD2`；波特率按数传模块实际配置 |
 | 遥控器 | MCU `UART7`，对应 `SERIAL1_PROTOCOL=23` | 从 UART5/UART7 中选择 UART7 | `PE8/PE7`；UART5 已分配给数传模块，避免复用冲突 |
-| 超声波 1 | MCU `UART8`，对应 `SERIAL4_PROTOCOL=9` | 使用原预留 UART8 | `PE1/PE0`；DYP-A02 时使用 `SERIAL4_BAUD=9` |
-| 超声波 2 | MCU `USART2`，对应 `SERIAL5_PROTOCOL=9` | USART2 从遥控器改为超声波 | `PA2/PA3`；DYP-A02 时使用 `SERIAL5_BAUD=9` |
+| 超声波 1 | MCU `UART8`，对应 `SERIAL4_PROTOCOL=9` | 使用原预留 UART8 | `PE1/PE0`；DYP-A02 使用 `RNGFND4_*` |
+| 超声波 2 | MCU `USART2`，对应 `SERIAL5_PROTOCOL=9` | USART2 从遥控器改为超声波 | `PA2/PA3`；DYP-A02 使用 `RNGFND8_*` |
 | RK3588 通信 | MCU `USART3`，对应 `SERIAL6_PROTOCOL=50`、`SERIAL6_BAUD=115` | `AP_CompanionComputer` 已实现 | `PB10/PB11`；`CC_PORT` 选择第 N 个协议 50 串口 |
 | GPS | MCU `USART6`，对应 `SERIAL7_PROTOCOL=5` | 目标分配已确认 | `PC6/PC7`；`SERIAL7_BAUD` 按 GPS 型号确认 |
 | RS485 电调遥测 | MCU `UART4`，对应 `SERIAL8_PROTOCOL=51`、`SERIAL8_BAUD=115` | `AP_ESC_Telem_2BLD6010` 已实现 | `PC10/PC11`；只读 Modbus RTU，自动方向收发器使用 `SERIAL8_OPTIONS=0` |
@@ -28,15 +28,17 @@
 
 ## 引脚资源表
 
+> `PWM(1/2/7/8)` 对应的 `SERVO1/2/7/8_FUNCTION` 固定为 `-1`，由轮编码器以 GPIO50/51/56/57 使用。右轮编码器按实测参数使用 `WENC2_PINA=51`、`WENC2_PINB=50`。出厂默认参数只固化编码器类型和引脚，不固化 CPR、轮径、位置等实机标定值。
+
 | STM32H743VIT6引脚分配 | base on FC | 接口数 | 外设 | 备注 | 网络标签 | Mission Planner 参数配置 | 是否改变 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **PWM** |  |  | 标注(FC)为FC上面的接口 |  |  |  |  |
-| PE13**√** | TIM1_CH3 | **1** | 左电机控制信号 | 左边无刷电机 | BP_PWM_CH1 | `SERVO1_FUNCTION=73` | 否 |
-| PE14**√** | TIM1_CH4 | **1** | 右电机控制信号 | 右边无刷电机 | BP_PWM_CH2 | `SERVO3_FUNCTION=74` | 否 |
-| PC8**√** | TIM8_CH3 | **1** | 前滚刷 | 前无刷电机 | BP_PWM_CH3 | `SERVO2_FUNCTION=157` | 新增 |
-| PD15**√** | TIM4_CH4 | **1** | 后滚刷 | 后无刷电机 | BP_PWM_CH4 | `SERVO4_FUNCTION=158` | 否 |
-| PA8√ | TIM1_CH1 | **1** | 右编码器 A 相 | 右轮 | BP_PWM_CH5 | `WENC2_PINA=50` | 否 |
-| PE11√ | TIM1_CH2 | **1** | 右编码器 B 相 | 右轮 | BP_PWM_CH6 | `WENC2_PINB=51` | 否 |
+| PE13**√** | TIM1_CH3 | **1** | 左电机控制信号 | 左边无刷电机 | BP_PWM_CH1 | `SERVO3_FUNCTION=73`<br/>`SERVO3_REVERSED=1` | 否 |
+| PE14**√** | TIM1_CH4 | **1** | 右电机控制信号 | 右边无刷电机 | BP_PWM_CH2 | `SERVO4_FUNCTION=74` | 否 |
+| PC8**√** | TIM8_CH3 | **1** | 前滚刷 | 前无刷电机 | BP_PWM_CH3 | `SERVO9_FUNCTION=157` | 新增 |
+| PD15**√** | TIM4_CH4 | **1** | 后滚刷 | 后无刷电机 | BP_PWM_CH4 | `SERVO6_FUNCTION=158` | 否 |
+| PA8√ | TIM1_CH1 | **1** | 右编码器 A 相 | 右轮 | BP_PWM_CH5 | `WENC2_PINB=50` | 否 |
+| PE11√ | TIM1_CH2 | **1** | 右编码器 B 相 | 右轮 | BP_PWM_CH6 | `WENC2_PINA=51` | 否 |
 | PA0√ | TIM5_CH1 | **1** | 左编码器 A 相 | 左轮 | BP_PWM_CH7 | `WENC_PINA=56` | 否 |
 | PA1√ | TIM5_CH2 | **1** | 左编码器 B 相 | 左轮 | BP_PWM_CH8 | `WENC_PINB=57` | 否 |
 | PD14**√** | TIM4_CH3 | **1** | 舵机 | 升降吸盘 | BP_PWM_CH9 | `SERVO5_FUNCTION=159` | 否 |
@@ -47,16 +49,16 @@
 | PB10.PB11 | USART3_TX.USART3_RX | **2** | RK3588 通信 | MCU `USART3` 对应 `SERIAL6` | BP_USART3_TX.BP_USART3_RX | `SERIAL6_PROTOCOL=50`<br/>`SERIAL6_BAUD=115`<br/>`SERIAL6_OPTIONS=0` | 用途确认 |
 | PE8.PE7 | UART7_TX.UART7_RX | **2** | 遥控器 | MCU `UART7` 对应 `SERIAL1` |  | `SERIAL1_PROTOCOL=23`<br/>`SERIAL1_BAUD=115`<br/>`SERIAL1_OPTIONS=0` | 修改用途：从 UART5/UART7 中选择 UART7 |
 | PB6.PB7 | USART1_TX.USART1_RX | **2** | 预留串口 | MCU `USART1` 对应 `SERIAL3` |  | `SERIAL3_PROTOCOL=-1` | 取消 GPS 用途 |
-| PA2.PA3 | USART2_TX.USART2_RX | **2** | 超声波 2 | MCU `USART2` 对应 `SERIAL5` | FMU_USART2_TX_TEL3.FMU_USART2_RX_TEL3 | `SERIAL5_PROTOCOL=9`<br/>`SERIAL5_BAUD=9`<br/>`SERIAL5_OPTIONS=0`<br/>`RNGFND2_TYPE=45` | 修改用途：遥控器迁移至 UART7 |
+| PA2.PA3 | USART2_TX.USART2_RX | **2** | 超声波 2 | MCU `USART2` 对应 `SERIAL5` | FMU_USART2_TX_TEL3.FMU_USART2_RX_TEL3 | `SERIAL5_PROTOCOL=9`<br/>`SERIAL5_BAUD=9`<br/>`SERIAL5_OPTIONS=0`<br/>`RNGFND8_TYPE=45` | 修改用途：遥控器迁移至 UART7 |
 | PC6.PC7 | USART6_TX.USART6_RX | **2** | GPS | MCU `USART6` 对应 `SERIAL7` | FMU_USART6_TX_TO_IO.FMU_USART6_RX_FROM_IO | `SERIAL7_PROTOCOL=5`<br/>`SERIAL7_BAUD=<按GPS型号>`<br/>`SERIAL7_OPTIONS=0` | 修改用途 |
 | PC10.PC11 | UART4_TX.UART4_RX | **2** | RS485 电调数据 | MCU `UART4` 对应 `SERIAL8` | FMU_UART4_TX.FMU_UART4_RX | `SERIAL8_PROTOCOL=51`<br/>`SERIAL8_BAUD=115`<br/>`SERIAL8_OPTIONS=0` | 修改用途 |
-| PE0.PE1 | UART8_RX.UART8_TX | **2** | 超声波 1 | MCU `UART8` 对应 `SERIAL4` | FMU_UART8_TX.FMU_UART8_RX | `SERIAL4_PROTOCOL=9`<br/>`SERIAL4_BAUD=9`<br/>`SERIAL4_OPTIONS=0`<br/>`RNGFND1_TYPE=45` | 修改用途：启用原预留 UART8 |
+| PE0.PE1 | UART8_RX.UART8_TX | **2** | 超声波 1 | MCU `UART8` 对应 `SERIAL4` | FMU_UART8_TX.FMU_UART8_RX | `SERIAL4_PROTOCOL=9`<br/>`SERIAL4_BAUD=9`<br/>`SERIAL4_OPTIONS=0`<br/>`RNGFND4_TYPE=45` | 修改用途：启用原预留 UART8 |
 |  | 小计 | **16** | **共 8 个 MCU 串口、16 个 TX/RX 引脚** |  |  |  |  |
 | **ADC** |  |  |  |  |  |  |  |
 | PC0√ | ADC123_INP10 | **1** | 气压 | MCP-H10-P 3.3V 吸附负压模拟量，0.1V=0kPa、1.6V=-50kPa、3.1V=-100kPa | BP_PRESSURE | `SPRESS_PIN=10`；Status 查看 `press_abs2`（hPa）、`SUCT_PKPA`/`SUCT_HLT` | 否 |
 | PC1√ | ADC123_INP11 | **1** | 温度 | 模拟温度输入 | BP_TEMPERATURE | 自定义温度模块使用 ADC pin `11`；暂无标准 Mission Planner 参数 | 否 |
-| PA4 | ADC12_INP18 | **1** | 电流采集 | 主电池电流 | FMU_BAT1_I | `BATT_CURR_PIN=18`<br/>`BATT_AMP_PERVLT=<实测标定>`<br/>`BATT_AMP_OFFSET=<实测标定>` | 否 |
-| PC4 | ADC12_INP4 | **1** | 电压采集 | 主电池电压 | FMU_BAT1_V | `BATT_VOLT_PIN=4`<br/>`BATT_VOLT_MULT=<实测标定>` | 否 |
+| PA4 | ADC12_INP18 | **1** | 电流采集 | 主电池电流 | FMU_BAT1_I | `BATT_CURR_PIN=18`<br/>`BATT_AMP_PERVLT=85`<br/>`BATT_AMP_OFFSET=-0.001` | 否 |
+| PC4 | ADC12_INP4 | **1** | 电压采集 | 主电池电压 | FMU_BAT1_V | `BATT_VOLT_PIN=4`<br/>`BATT_VOLT_MULT=20.65` | 否 |
 |  | 小计 | **4** | **引出4个ADC** |  |  |  |  |
 | **IO** |  |  |  |  |  |  |  |
 | PA10√ | 普通IO | **1** | 雨刮 | GPIO93，默认低电平 | BP_WIPER | 暂无标准参数；自定义模块控制 `GPIO93` | 新增 |
@@ -66,7 +68,7 @@
 | PB5√ | 普通IO | **1** | 红外 | GPIO98，下拉输入 | BP_IR_SENSOR | 暂无标准参数；自定义安全模块读取 `GPIO98` | 新增 |
 | PE2√ | 普通IO | 1 | 电源开关控制引脚 | GPIO99，默认低电平 | MCU_K | 暂无标准参数；关机模块控制 `GPIO99` | 新增 |
 | PE3√ | 普通IO | 1 | 急停 | GPIO100，下拉输入 | KILL | 暂无标准参数；物理急停模块读取 `GPIO100` | 新增 |
-| PE5√ | 普通IO | 1 | 气阀 | 两位两通常闭型真空泄压电磁阀；GPIO59 默认低电平关闭 | BP_PWM_CH10 | 若使用 AP_Relay：`RELAY1_FUNCTION=1`<br/>`RELAY1_PIN=59`<br/>`RELAY1_DEFAULT=0`<br/>否则由自定义吸盘模块控制 `GPIO59` | 新增 |
+| PE5√ | 普通IO | 1 | 气阀 | 两位两通常闭型真空泄压电磁阀；逻辑 ON 时 GPIO59 输出低电平 | BP_PWM_CH10 | 若使用 AP_Relay：`RELAY1_FUNCTION=1`<br/>`RELAY1_PIN=59`<br/>`RELAY1_INVERTED=1`<br/>`RELAY1_DEFAULT=0`<br/>否则由自定义吸盘模块控制 `GPIO59` | 新增 |
 | PE6√ | 普通IO | 1 | 气泵 | 有刷直流真空气泵；GPIO60 仅用于启停，默认低电平关闭，不再支持 PWM 调速 | BP_PWM_CH11 | 若使用 AP_Relay：`RELAY2_FUNCTION=1`<br/>`RELAY2_PIN=60`<br/>`RELAY2_DEFAULT=0`<br/>否则由自定义吸盘模块控制 `GPIO60` | 修改用途：从 PWM 改为 GPIO |
 |  | 小计 | **10** | **引出10个IO** | 气阀和气泵均为 GPIO 输出 |  |  |  |
 | **SPI** |  |  |  |  |  |  |  |
@@ -168,7 +170,7 @@ SERIAL8_OPTIONS  0
 
 > 编号说明：MCU `UART7` 对应 ArduPilot `SERIAL1`，MCU `UART8` 对应 `SERIAL4`，MCU `USART2` 对应 `SERIAL5`，MCU `USART6` 对应 `SERIAL7`，MCU `UART4` 对应 `SERIAL8`。不得仅凭硬件串口名称直接填写同号的 `SERIALx_*` 参数。
 
-> 超声波说明：两路串口超声波分别使用 `PE1/PE0 UART8`（`SERIAL4`→LEFT_OUT）和 `PA2/PA3 USART2`（`SERIAL5`→RIGHT_OUT）。DYP-A02：`PROTOCOL=9`、`BAUD=9`、`RNGFNDx_TYPE=45`，ORIENT LEFT_OUT=`7` / RIGHT_OUT=`1`；状态帧内侧两路同侧拷贝。详见 [地面站参数配置.md](./地面站参数配置.md)。`PD0/PD1 FDCAN1` 恢复为预留 CAN 总线。
+> 超声波说明：两路串口超声波分别使用 `PE1/PE0 UART8`（`SERIAL4`→LEFT_OUT，对应 `RNGFND4`）和 `PA2/PA3 USART2`（`SERIAL5`→RIGHT_OUT，对应 `RNGFND8`）。DYP-A02：`PROTOCOL=9`、`BAUD=9`、`RNGFND4/8_TYPE=45`，ORIENT LEFT_OUT=`7` / RIGHT_OUT=`1`；状态帧内侧两路同侧拷贝。详见 [地面站参数配置.md](./地面站参数配置.md)。`PD0/PD1 FDCAN1` 恢复为预留 CAN 总线。
 
 6. ADC 按资源分配改为 4 路
 ```text
@@ -208,7 +210,7 @@ PE5  BP_VALVE OUTPUT GPIO(59) LOW
 PE6  BP_PUMP OUTPUT GPIO(60) LOW
 ```
 
-> 气阀和气泵说明：PE5/GPIO59 与 PE6/GPIO60 均配置为普通 GPIO，默认低电平。气阀按两位两通常闭型真空泄压电磁阀使用；气泵仅做启停控制。当前 `AP_SuctionCup` 仍需同步改写 GPIO/Relay 输出路径，不能继续依赖 `SERVO10_FUNCTION=160` 或 `SERVO11_FUNCTION=161`。
+> 气阀和气泵说明：PE5/GPIO59 与 PE6/GPIO60 均配置为普通 GPIO，hwdef 上电初值为低电平。运行时气阀使用 `RELAY1_INVERTED=1`，逻辑 ON 输出低电平、逻辑 OFF 输出高电平；气泵仅做启停控制且保持非反相。当前 `AP_SuctionCup` 仍需同步改写 GPIO/Relay 输出路径，不能继续依赖 `SERVO10_FUNCTION=160` 或 `SERVO11_FUNCTION=161`。
 
 9. 给所有 PWM 行加了用途注释
 包括：
