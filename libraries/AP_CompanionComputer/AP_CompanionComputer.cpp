@@ -1,6 +1,7 @@
 #include "AP_CompanionComputer.h"
 #include <AP_SerialManager/AP_SerialManager.h>
 #include <AP_AHRS/AP_AHRS.h>
+#include <AP_InertialSensor/AP_InertialSensor.h>
 #include <AP_BattMonitor/AP_BattMonitor.h>
 #include <AP_GPS/AP_GPS.h>
 #include <AP_WheelEncoder/AP_WheelEncoder.h>
@@ -45,6 +46,8 @@ AP_CompanionComputer::AP_CompanionComputer() :
     _uart(nullptr),
     _last_sent_ms(0),
     _last_motion_sent_ms(0),
+    _motion_sequence(0),
+    _boot_id(0),
     _tx_drop_event(0),
     _tx_drop_periodic(0),
     // NCLK 秒窗计数 / NSPD 降频状态
@@ -88,6 +91,13 @@ void AP_CompanionComputer::init()
     if (_uart != nullptr) {
         _uart->begin(115200, 512, 1024);
     }
+
+    // boot_id：启动时生成，避免为 0
+    _boot_id = (uint16_t)(AP_HAL::micros64() ^ (uint64_t(AP_HAL::millis()) << 8));
+    if (_boot_id == 0) {
+        _boot_id = 1;
+    }
+    _motion_sequence = 0;
 }
 
 void AP_CompanionComputer::update()
@@ -704,6 +714,18 @@ void AP_CompanionComputer::send_data()
         status_data.vehicle_flags |= VEHICLE_FLAG_ARMED;
     }
 
+    // IMU 温度
+    status_data.imu_temp_cdeg = IMU_TEMP_INVALID_CDEG;
+    {
+        AP_InertialSensor &ins = AP::ins();
+        if (ins.get_gyro_health() || ins.get_accel_health()) {
+            const float temp_c = ins.get_temperature(ins.get_first_usable_gyro());
+            if (isfinite(temp_c) && temp_c > -100.0f && temp_c < 150.0f) {
+                status_data.imu_temp_cdeg = constrain_int16(int16_t(lroundf(temp_c * 100.0f)), -32767, 32767);
+            }
+        }
+    }
+
     uint8_t packet[COMPANION_SEND_TOTAL_LENGTH];
     const size_t frame_len = build_frame(FCU_FB_STATUS,
                                          reinterpret_cast<const uint8_t *>(&status_data),
@@ -718,7 +740,7 @@ void AP_CompanionComputer::send_data()
     }
 }
 
-// 50Hz 运动反馈 0xBB 0x05（heading / 地速 / 轮速 / IMU / enc / EKF XY）
+// 100Hz 运动反馈 0xBB 0x05（时间戳/序号 + heading/地速/轮速/INS IMU/有符号 enc）
 void AP_CompanionComputer::send_motion_data()
 {
     if (!_enable || _uart == nullptr) {
@@ -726,18 +748,34 @@ void AP_CompanionComputer::send_motion_data()
     }
 
     const uint32_t now = AP_HAL::millis();
-    if (now - _last_motion_sent_ms < 20) {  // 50Hz
+    if (now - _last_motion_sent_ms < 10) {  // 100Hz
         return;
     }
 
     MotionFeedbackData motion {};
     const AP_AHRS &ahrs = AP::ahrs();
+    AP_InertialSensor &ins = AP::ins();
+
+    motion.sample_time_us = ins.get_last_update_usec();
+    if (motion.sample_time_us == 0) {
+        motion.sample_time_us = (uint32_t)AP_HAL::micros64();
+    }
+    motion.sequence = _motion_sequence;
+    motion.boot_id = _boot_id;
+
+    motion.imu_status = 0;
+    if (ins.get_gyro_health()) {
+        motion.imu_status |= MOTION_IMU_GYRO_OK;
+    }
+    if (ins.get_accel_health()) {
+        motion.imu_status |= MOTION_IMU_ACCEL_OK;
+    }
 
     motion.heading = (uint16_t)ahrs.yaw_sensor;
     motion.velocity = constrain_int16(int16_t(lroundf(ahrs.groundspeed() * 100.0f)), -32767, 32767);
 
-    const Vector3f &gyro = ahrs.get_gyro();
-    const Vector3f accel = ahrs.get_accel() - ahrs.get_accel_bias();
+    const Vector3f &gyro = ins.get_gyro();
+    const Vector3f &accel = ins.get_accel();
     motion.ax = constrain_int16(int16_t(lroundf(accel.x * 100.0f)), -32767, 32767);
     motion.ay = constrain_int16(int16_t(lroundf(accel.y * 100.0f)), -32767, 32767);
     motion.az = constrain_int16(int16_t(lroundf(accel.z * 100.0f)), -32767, 32767);
@@ -745,6 +783,7 @@ void AP_CompanionComputer::send_motion_data()
     motion.gyro_y = constrain_int16(int16_t(lroundf(degrees(gyro.y) * 100.0f)), -32767, 32767);
     motion.gyro_z = constrain_int16(int16_t(lroundf(degrees(gyro.z) * 100.0f)), -32767, 32767);
 
+    motion.enc_flags = 0;
     motion.enc_left = 0;
     motion.enc_right = 0;
     AP_WheelEncoder *wenc = AP::wheelencoder();
@@ -753,29 +792,25 @@ void AP_CompanionComputer::send_motion_data()
             if (!wenc->enabled(i)) {
                 continue;
             }
-            if (wenc->healthy(i)) {
+            const bool healthy = wenc->healthy(i);
+            if (healthy) {
                 const float rate_mps = wenc->get_rate(i) * wenc->get_wheel_radius(i);
                 const int16_t vel_cms = constrain_int16(int16_t(lroundf(rate_mps * 100.0f)), -32767, 32767);
                 if (i == 0) {
                     motion.left_track_vel = vel_cms;
+                    motion.enc_flags |= MOTION_ENC_LEFT_VALID;
                 } else {
                     motion.right_track_vel = vel_cms;
+                    motion.enc_flags |= MOTION_ENC_RIGHT_VALID;
                 }
             }
+            // 有符号累计 ticks：即使瞬时 unhealthy 仍上报最后累计值，由 enc_flags 标有效性
             if (i == 0) {
-                motion.enc_left = wenc->get_total_count(0);
+                motion.enc_left = wenc->get_distance_count(0);
             } else if (i == 1) {
-                motion.enc_right = wenc->get_total_count(1);
+                motion.enc_right = wenc->get_distance_count(1);
             }
         }
-    }
-
-    motion.pos_n_cm = 0;
-    motion.pos_e_cm = 0;
-    Vector2f pos_ne_m;
-    if (ahrs.get_relative_position_NE_origin(pos_ne_m)) {
-        motion.pos_n_cm = int32_t(lroundf(pos_ne_m.x * 100.0f));
-        motion.pos_e_cm = int32_t(lroundf(pos_ne_m.y * 100.0f));
     }
 
     uint8_t packet[COMPANION_SEND_MOTION_LENGTH];
@@ -789,6 +824,7 @@ void AP_CompanionComputer::send_motion_data()
 
     if (send_frame(packet, frame_len, TxPriority::PERIODIC)) {
         _last_motion_sent_ms = now;
+        _motion_sequence++;
     }
 }
 

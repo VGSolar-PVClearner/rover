@@ -18,13 +18,13 @@
  *   10Hz  send2_companion_status()     → publish_*()          Mode 写入模式侧字段
  *                                       → send_data()          0xBB 0x01 状态反馈
  *                                       → send_nav_data()      0xBB 0x04 导航状态（实际上不用）
- *   50Hz  send2_companion_motion()     → send_motion_data()   0xBB 0x05 运动反馈
+ *   100Hz send2_companion_motion()     → send_motion_data()   0xBB 0x05 运动反馈
  *
  * DataFlash 通信日志：AP_CompanionComputer_Logging.cpp（CC_LOG）
  *
  * 上行发送时机：
  *   事件帧 0x02/0x03 — parse_* 或 Mode 调用时立即 send_frame(EVENT)
- *   周期帧 0x01/0x04/0x05 — PERIODIC；同拍时调度先 10Hz（0x01）再 50Hz（0x05）
+ *   周期帧 0x01/0x04/0x05 — PERIODIC；同拍时调度先 10Hz（0x01）再 100Hz（0x05）
  */
 class AP_CompanionComputer
 {
@@ -43,7 +43,7 @@ public:
     void init();   // 初始化串口
     void update(); // 解析NCU数据
     void send_data();          // 10Hz 0xBB 0x01 状态反馈
-    void send_motion_data();   // 50Hz 0xBB 0x05 运动反馈（heading/速度/IMU/enc/XY）
+    void send_motion_data();   // 100Hz 0xBB 0x05 运动反馈（时间戳/序号 + IMU/enc/运动量）
 
     // ModeVGSolar 导航 ACK（0xBB 0x02，cmd_type=NCU_CMD_POSITION）
     void send_position_ack(uint8_t status);
@@ -162,7 +162,9 @@ private:
     uint8_t _rx_count;
     uint32_t _rx_start_time;
     uint32_t _last_sent_ms;         // send_data 10Hz 限速
-    uint32_t _last_motion_sent_ms;  // send_motion_data 50Hz 限速
+    uint32_t _last_motion_sent_ms;  // send_motion_data 100Hz 限速
+    uint32_t _motion_sequence;     // 0x05 sequence
+    uint16_t _boot_id;             // 启动标识；init 时赋值
     uint16_t _tx_drop_event;
     uint16_t _tx_drop_periodic;
 

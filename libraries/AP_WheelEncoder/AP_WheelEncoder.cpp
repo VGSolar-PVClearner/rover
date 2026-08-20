@@ -322,6 +322,15 @@ uint32_t AP_WheelEncoder::get_total_count(uint8_t instance) const
     return state[instance].total_count;
 }
 
+// get signed cumulative encoder ticks (forward +, backward -)
+int32_t AP_WheelEncoder::get_distance_count(uint8_t instance) const
+{
+    if (instance >= WHEELENCODER_MAX_INSTANCES) {
+        return 0;
+    }
+    return state[instance].distance_count;
+}
+
 // get the total distance traveled in meters
 uint32_t AP_WheelEncoder::get_error_count(uint8_t instance) const
 {

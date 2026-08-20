@@ -100,6 +100,9 @@ public:
     // get the total number of sensor reading from the encoder
     uint32_t get_total_count(uint8_t instance) const;
 
+    // get signed cumulative encoder ticks (forward +, backward -)
+    int32_t get_distance_count(uint8_t instance) const;
+
     // get the total number of errors reading from the encoder
     uint32_t get_error_count(uint8_t instance) const;
 
