@@ -21,6 +21,7 @@
 #include "AP_BattMonitor.h"
 
 #include <AP_Common/AP_Common.h>
+#include <cmath>
 
 class AP_BattMonitor_Backend
 {
@@ -57,7 +58,7 @@ public:
     virtual bool get_temperature(float &temperature) const;
 
     // capacity_remaining_pct - returns true if the battery % is available and writes to the percentage argument
-    // returns false if the battery is unhealthy, does not have current monitoring, or the pack_capacity is too small
+    // returns false if the battery is unhealthy or the configured percentage source is unavailable
     virtual bool capacity_remaining_pct(uint8_t &percentage) const WARN_IF_UNUSED;
 
     // return true if cycle count can be provided and fills in cycles argument
@@ -98,6 +99,28 @@ public:
     // amps: current (A)
     // dt_us: time between samples (micro-seconds)
     static float calculate_mah(float amps, float dt_us) { return (float) (amps * dt_us * AUS_TO_MAH); }
+
+    // Calculate remaining percentage from a battery pack voltage range.
+    static bool calculate_voltage_remaining_pct(float voltage,
+                                                float voltage_min,
+                                                float voltage_max,
+                                                uint8_t &percentage)
+    {
+        if (std::isnan(voltage) || std::isnan(voltage_min) || std::isnan(voltage_max) ||
+            voltage <= 0 || voltage_max <= voltage_min) {
+            return false;
+        }
+
+        const float percentage_float = 100.0f * (voltage - voltage_min) / (voltage_max - voltage_min);
+        if (percentage_float <= 0) {
+            percentage = 0;
+        } else if (percentage_float >= 100) {
+            percentage = 100;
+        } else {
+            percentage = static_cast<uint8_t>(percentage_float + 0.5f);
+        }
+        return true;
+    }
 
     // check if a option is set
     bool option_is_set(const AP_BattMonitor_Params::Options option) const {
