@@ -57,7 +57,7 @@
 | RxN | uint16 | 上一秒成功解析的帧数 |
 | BadCRC | uint16 | 上一秒校验失败次数 |
 | BadLen | uint16 | 上一秒长度不符次数 |
-| DropP | uint16 | 周期发送（`0x01` 10Hz / `0x05` 100Hz 等）因 TX 满丢弃的次数（**累计**） |
+| DropP | uint16 | 周期发送（如 10Hz 状态）因 TX 满丢弃的次数（**累计**） |
 | DropE | uint16 | 事件发送（ACK 等）因 TX 满丢弃的次数（**累计**） |
 | CMode | uint8 | 当前上报 `control_mode` |
 | Fault | uint16 | 当前 `fault_code` |

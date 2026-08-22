@@ -37,9 +37,8 @@ ModeVGSolar::update()         ← 主循环
         ├─► AP_SuctionCup（转弯内吸附）
         └─► AP_Brush（NCU 运行参数）
 
-10Hz：send2_companion_status → publish_* + send_data（0xBB 0x01）
+10Hz：publish_status_feedback → companion send_data（0xBB 0x01）
       导航中另发 0xBB 0x04
-100Hz：send2_companion_motion → send_motion_data（0xBB 0x05：时间戳/序号 + heading/地速/轮速/INS IMU/有符号enc）
 
 独立 100Hz 调度：AP_ESC_Telem_2BLD6010::update()
       └─ SERIAL8 / protocol 51 轮询 1~4 台电调并发布标准 ESC 遥测

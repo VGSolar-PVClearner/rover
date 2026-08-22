@@ -19,10 +19,9 @@
  *            → AP_SuctionCup / AP_Brush / ModeGuided 执行
  *
  * Rover 调度：
- *   50Hz  receive_companion_computer()     收 NCU 帧
+ *   50Hz  companion_computer.update()     收 NCU 帧
  *   主循环 mode_vgsolar.update()           本文件主逻辑
- *   10Hz  send2_companion_status()         0xBB 0x01/0x04 状态/导航反馈上行
- *   100Hz send2_companion_motion()         0xBB 0x05 运动反馈
+ *   10Hz  publish_*() + send_data()       状态/导航反馈上行
  *
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
  * 安全：倾角>30° 或 NCU 运动丢控超时（NCU_HEARTBEAT_TIMEOUT_MS）→ freeze 吸盘 + safety_hold；条件恢复后 raise
