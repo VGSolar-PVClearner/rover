@@ -140,12 +140,11 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
 #if AP_ROVER_ADVANCED_FAILSAFE_ENABLED
     SCHED_TASK(afs_fs_check,           10,    200, 129),
 #endif
-    // NCU 伴机串口：收 50Hz；状态 10Hz；运动 100Hz（优先级低于 status，同拍先发 0x01）
+    // NCU 伴机串口：收 50Hz / 发 10Hz
     SCHED_TASK(receive_companion_computer,  50,    200,  172),
-    SCHED_TASK(send2_companion_status,      10,     50,  173),
-    SCHED_TASK(send2_companion_motion,     100,    100,  174),
+    SCHED_TASK(send2_companion_computer,    10,     50,  173),
 #if AP_ESC_TELEM_2BLD6010_ENABLED
-    SCHED_TASK_CLASS(AP_ESC_Telem_2BLD6010, &rover.g2.esc_telem_2bld6010, update, 100, 150, 175),
+    SCHED_TASK_CLASS(AP_ESC_Telem_2BLD6010, &rover.g2.esc_telem_2bld6010, update, 100, 150, 174),
 #endif
 };
 
@@ -162,19 +161,9 @@ void Rover::get_scheduler_tasks(const AP_Scheduler::Task *&tasks,
 void Rover::receive_companion_computer()
 {
     companion_computer.update();  // 解析 NCU → FCU 指令
-#if MODE_VGSOLAR_ENABLED
-    // ARM/DISARM 仅 Mode17 消费；其它模式立即失败 ACK，避免无应答或进模式后误执行
-    if (control_mode != &mode_vgsolar && companion_computer.is_new_system_ctrl()) {
-        const auto &cmd = companion_computer.get_latest_system_ctrl();
-        if (cmd.command == SYS_CMD_ARM || cmd.command == SYS_CMD_DISARM) {
-            companion_computer.clear_new_system_flag();
-            companion_computer.send_system_ctrl_ack(CMD_ACK_FAILED);
-        }
-    }
-#endif
 }
 
-void Rover::send2_companion_status()
+void Rover::send2_companion_computer()
 {
 #if MODE_VGSOLAR_ENABLED
     if (control_mode == &mode_vgsolar) {
@@ -184,11 +173,6 @@ void Rover::send2_companion_status()
 #endif
     companion_computer.send_data();     // FCU → NCU 状态反馈 0xBB 0x01
     companion_computer.send_nav_data(); // FCU → NCU 导航状态 0xBB 0x04（Mode 置位后生效）
-}
-
-void Rover::send2_companion_motion()
-{
-    companion_computer.send_motion_data();  // FCU → NCU 运动反馈 0xBB 0x05
 }
 
 constexpr int8_t Rover::_failsafe_priorities[7];

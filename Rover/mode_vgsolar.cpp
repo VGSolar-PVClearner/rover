@@ -19,10 +19,9 @@
  *            → AP_SuctionCup / AP_Brush / ModeGuided 执行
  *
  * Rover 调度：
- *   50Hz  receive_companion_computer()     收 NCU 帧
+ *   50Hz  companion_computer.update()     收 NCU 帧
  *   主循环 mode_vgsolar.update()           本文件主逻辑
- *   10Hz  send2_companion_status()         0xBB 0x01/0x04 状态/导航反馈上行
- *   100Hz send2_companion_motion()         0xBB 0x05 运动反馈
+ *   10Hz  publish_*() + send_data()       状态/导航反馈上行
  *
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
  * 安全：倾角>30° 或 NCU 运动丢控超时（NCU_HEARTBEAT_TIMEOUT_MS）→ freeze 吸盘 + safety_hold；条件恢复后 raise
@@ -438,35 +437,6 @@ void ModeVGSolar::read_companion_commands()
             hal.scheduler->reboot(false);
             break;
         // SYS_CMD_SHUTDOWN(0x04) 关机未实现
-        case SYS_CMD_ARM: {
-            // ACK = 执行结果；已解锁幂等成功；急停中拒绝；解除急停不自动解锁
-            uint8_t ack = CMD_ACK_FAILED;
-            if (_vg_submode == VGSubMode::ESTOP) {
-                gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: ARM rejected, ESTOP");
-            } else if (rover.arming.is_armed()) {
-                ack = CMD_ACK_SUCCESS;
-            } else if (rover.arming.arm(AP_Arming::Method::MAVLINK)) {
-                ack = CMD_ACK_SUCCESS;
-                gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: NCU ARM ok");
-            } else {
-                gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: NCU ARM failed");
-            }
-            cc.send_system_ctrl_ack(ack);
-            break;
-        }
-        case SYS_CMD_DISARM: {
-            uint8_t ack = CMD_ACK_FAILED;
-            if (!rover.arming.is_armed()) {
-                ack = CMD_ACK_SUCCESS;
-            } else if (rover.arming.disarm(AP_Arming::Method::MAVLINK)) {
-                ack = CMD_ACK_SUCCESS;
-                gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: NCU DISARM ok");
-            } else {
-                gcs().send_text(MAV_SEVERITY_WARNING, "VG_SOLAR: NCU DISARM failed");
-            }
-            cc.send_system_ctrl_ack(ack);
-            break;
-        }
         default:
             break;
         }

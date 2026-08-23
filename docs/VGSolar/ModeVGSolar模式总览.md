@@ -37,9 +37,8 @@ ModeVGSolar::update()         ← 主循环
         ├─► AP_SuctionCup（转弯内吸附）
         └─► AP_Brush（NCU 运行参数）
 
-10Hz：send2_companion_status → publish_* + send_data（0xBB 0x01）
+10Hz：publish_status_feedback → companion send_data（0xBB 0x01）
       导航中另发 0xBB 0x04
-100Hz：send2_companion_motion → send_motion_data（0xBB 0x05：时间戳/序号 + heading/地速/轮速/INS IMU/有符号enc）
 
 独立 100Hz 调度：AP_ESC_Telem_2BLD6010::update()
       └─ SERIAL8 / protocol 51 轮询 1~4 台电调并发布标准 ESC 遥测
@@ -111,7 +110,6 @@ STOPPING → WAIT_STOPPED(约 500ms) → LOWER_SUCTION → TURNING → RAISE_SUC
 | `_enter()` | 要求 `VGS_ENABLE`；`clear_fault()`；激活吸盘/滚刷库；子模式待机；**丢弃未消费的 NCU 速度/转弯/导航**（避免 Manual 切回后突然跟旧指令） |
 | `_exit()` | 停车；吸盘紧急释放并去激活；滚刷停并去激活；丢弃未消费运动指令 |
 | 未解锁 | 可进入 VGSL，但滚刷/阀/泵/吸盘强制安全位；`lower()` 拒绝；运动类指令受限 |
-| NCU 解锁/上锁 | 系统控制 `0x05`/`0x06`；ACK=执行结果；急停中拒 ARM；与遥控并存；非 Mode17 失败 ACK |
 | 中途 disarm | 同安全位，并中止 TURN/NAV 类动作 |
 
 ---

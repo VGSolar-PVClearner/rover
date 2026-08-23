@@ -71,7 +71,6 @@
  *
  * --- 0x05 系统控制 (NCU_CMD_SYSTEM_CTRL, DATA_LENGTH = 0x01) ---
  * byte 5               command             0x01:急停  0x02:解除急停  0x03:重启  0x04:关机
- *                                          0x05:解锁(ARM)  0x06:上锁(DISARM)；ARM/DISARM 的 ACK 由 Mode 按执行结果发
  * byte 6               Checksum
  * byte 7               end sign            0xFF
  *
@@ -109,7 +108,7 @@
 * byte 3               command content     见下表
 * byte 4               DATA_LENGTH         见下表
 *
-* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x1D) ---
+* --- 0x01 状态反馈 (FCU_FB_STATUS, 10Hz, DATA_LENGTH = 0x22) ---
 * byte 5               battery_percent     电池电量 0~100 %
 * byte 6               longitude8          经度 int32 低 8 位 (×1e7)
 * byte 7               longitude16         经度 int32 8~15 位
@@ -119,51 +118,36 @@
 * byte 11              latitude16          纬度 int32 8~15 位
 * byte 12              latitude24          纬度 int32 16~23 位
 * byte 13              latitude32          纬度 int32 高 8 位
-* byte 14              roll_L              横滚 int16 低 8 位, 0.01°
-* byte 15              roll_H              横滚 int16 高 8 位
-* byte 16              pitch_L             俯仰 int16 低 8 位, 0.01°
-* byte 17              pitch_H             俯仰 int16 高 8 位
-* byte 18              control_mode        控制模式 (ControlMode 枚举)
-* byte 19              motion_state        运动状态 (MotionState 枚举)
-* byte 20              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
-* byte 21              fault_code_H        故障码 uint16 高 8 位
-* byte 22              gps_status          GPS 定位状态
-* byte 23              range_left_out_L    左外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
-* byte 24              range_left_out_H
-* byte 25              range_left_in_L     左内：拷贝 LEFT_OUT
-* byte 26              range_left_in_H
-* byte 27              range_right_in_L    右内：拷贝 RIGHT_OUT
-* byte 28              range_right_in_H
-* byte 29              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
-* byte 30              range_right_out_H
-* byte 31              vehicle_flags       bit0=1 已解锁 / 0 已上锁；bit1~7 预留
-* byte 32~33           imu_temp_cdeg       IMU 温度 int16, 0.01°C；无效 IMU_TEMP_INVALID_CDEG
-* byte 34              Checksum
-* byte 35              end sign            0xFF
+* byte 14              heading_L           航向角 uint16 低 8 位, 0.01° (0~36000)
+* byte 15              heading_H           航向角 uint16 高 8 位
+* byte 16              velocity_L          地速 int16 低 8 位, cm/s
+* byte 17              velocity_H          地速 int16 高 8 位
+* byte 18              left_track_vel_L    左履带速度 int16 低 8 位, cm/s (WENC)
+* byte 19              left_track_vel_H    左履带速度 int16 高 8 位
+* byte 20              right_track_vel_L   右履带速度 int16 低 8 位, cm/s (WENC2)
+* byte 21              right_track_vel_H   右履带速度 int16 高 8 位
+* byte 22              roll_L              横滚 int16 低 8 位, 0.01°
+* byte 23              roll_H              横滚 int16 高 8 位
+* byte 24              pitch_L             俯仰 int16 低 8 位, 0.01°
+* byte 25              pitch_H             俯仰 int16 高 8 位
+* byte 26              control_mode        控制模式 (ControlMode 枚举)
+* byte 27              motion_state        运动状态 (MotionState 枚举)
+* byte 28              fault_code_L        故障码 uint16 低 8 位 (FaultBits 位标志)
+* byte 29              fault_code_H        故障码 uint16 高 8 位
+* byte 30              gps_status          GPS 定位状态
+* byte 31              range_left_out_L    左外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
+* byte 32              range_left_out_H
+* byte 33              range_left_in_L     左内：拷贝 LEFT_OUT
+* byte 34              range_left_in_H
+* byte 35              range_right_in_L    右内：拷贝 RIGHT_OUT
+* byte 36              range_right_in_H
+* byte 37              range_right_out_L   右外超声 uint16 低 8 位, cm；无效 0xFFFF（接传感器）
+* byte 38              range_right_out_H
+* byte 39              Checksum
+* byte 40              end sign            0xFF
 *
 * 四路均在车头；仅 LEFT_OUT / RIGHT_OUT 接串口传感器。
 * ORIENT：LEFT_OUT=ROTATION_YAW_315(7)  RIGHT_OUT=ROTATION_YAW_45(1)
-*
-* --- 0x05 运动反馈 (FCU_FB_MOTION, 100Hz, DATA_LENGTH = 0x28) ---
-* byte 5~8             sample_time_us      采样时刻 uint32 us（FCU 单调时钟；优先 INS last update）
-* byte 9~12            sequence             本帧序号 uint32（成功发送后递增）
-* byte 13~14           boot_id             启动标识 uint16（每次 FCU 重启变化；0 保留不用）
-* byte 15              imu_status          bit0=gyro 健康 bit1=accel 健康；其余预留
-* byte 16              enc_flags            bit0=左编码器有效 bit1=右编码器有效
-* byte 17~18           heading               航向角 uint16, 0.01° (0~36000)
-* byte 19~20           velocity              地速 int16, cm/s
-* byte 21~22           left_track_vel       左履带速度 int16, cm/s (WENC)
-* byte 23~24           right_track_vel      右履带速度 int16, cm/s (WENC2)
-* byte 25~26           ax                   机体加速度 X int16, cm/s²（INS 标定后比力）
-* byte 27~28           ay
-* byte 29~30           az
-* byte 31~32           gyro_x               机体陀螺 X int16, 0.01°/s（INS）
-* byte 33~34           gyro_y
-* byte 35~36           gyro_z               0.01°/s；+右转 / -左转（车辆 FRD）
-* byte 37~40           enc_left             左轮有符号累计 ticks int32（前进+）
-* byte 41~44           enc_right            右轮有符号累计 ticks int32
-* byte 45              Checksum
-* byte 46              end sign             0xFF
 *
 * --- 0x02 指令应答 (FCU_FB_CMD_ACK, DATA_LENGTH = 0x02, 整帧 0x09 字节) ---
 * byte 5               cmd_type            对应的 NCU 指令类型
@@ -225,7 +209,6 @@ constexpr uint8_t FCU_FB_STATUS        = 0x01;
 constexpr uint8_t FCU_FB_CMD_ACK       = 0x02;
 constexpr uint8_t FCU_FB_PARAM         = 0x03;
 constexpr uint8_t FCU_FB_NAV_STATUS    = 0x04;
-constexpr uint8_t FCU_FB_MOTION        = 0x05;  // 与 NCU_CMD_SYSTEM_CTRL 同号；靠 source=0xBB 区分
 
 // 速度控制模式
 constexpr uint8_t SPEED_MODE_YAW        = 0x01;
@@ -247,8 +230,6 @@ constexpr uint8_t SYS_CMD_ESTOP         = 0x01;
 constexpr uint8_t SYS_CMD_ESTOP_CLEAR   = 0x02;
 constexpr uint8_t SYS_CMD_REBOOT        = 0x03;
 constexpr uint8_t SYS_CMD_SHUTDOWN      = 0x04;
-constexpr uint8_t SYS_CMD_ARM           = 0x05;  // 解锁；ACK 由 Mode 按执行结果发送
-constexpr uint8_t SYS_CMD_DISARM        = 0x06;  // 上锁；ACK 由 Mode 按执行结果发送
 
 // 导航模式
 constexpr uint8_t NAV_MODE_GPS          = 0x01;
@@ -323,30 +304,18 @@ constexpr uint8_t NCU_DATA_LEN_POSITION     = 15;
 constexpr uint8_t NCU_RX_MAX_DATA_LEN  = NCU_DATA_LEN_POSITION;
 constexpr uint8_t COMPANION_RECV_TOTAL_LENGTH = FRAME_OVERHEAD + NCU_RX_MAX_DATA_LEN;
 
-constexpr uint8_t FCU_DATA_LEN_STATUS      = 29;  // 车控心跳 + IMU 温度；航向/速度/IMU/enc/XY 在 0x05
+constexpr uint8_t FCU_DATA_LEN_STATUS      = 34;  // 原 26 + 4×uint16 超声波 cm
 constexpr uint16_t RANGE_INVALID_CM        = 0xFFFF;  // 测距无效/无传感器
-constexpr int16_t IMU_TEMP_INVALID_CDEG   = -32768;  // 温度无效（0.01°C）
-
-// 状态帧 vehicle_flags
-constexpr uint8_t VEHICLE_FLAG_ARMED       = (1U << 0);  // 1=已解锁 soft_armed
 constexpr uint8_t FCU_DATA_LEN_CMD_ACK     = 2;
 constexpr uint8_t FCU_DATA_LEN_PARAM       = 7;
 constexpr uint8_t FCU_DATA_LEN_NAV_STATUS  = 8;  // nav_state+coord_mode+dist32+heading_err
-constexpr uint8_t FCU_DATA_LEN_MOTION      = 40;  // 时间戳/序号/boot + IMU/enc 元数据 + 运动量（无 EKF XY）
 
-// 运动帧标志
-constexpr uint8_t MOTION_IMU_GYRO_OK     = (1U << 0);
-constexpr uint8_t MOTION_IMU_ACCEL_OK    = (1U << 1);
-constexpr uint8_t MOTION_ENC_LEFT_VALID  = (1U << 0);
-constexpr uint8_t MOTION_ENC_RIGHT_VALID = (1U << 1);
-
-constexpr uint8_t FCU_TX_MAX_DATA_LEN  = FCU_DATA_LEN_MOTION;
+constexpr uint8_t FCU_TX_MAX_DATA_LEN  = FCU_DATA_LEN_STATUS;
 constexpr uint8_t COMPANION_SEND_TOTAL_LENGTH = FRAME_OVERHEAD + FCU_TX_MAX_DATA_LEN;
 
 constexpr uint8_t COMPANION_SEND_RESP_LENGTH  = 0x09;
 constexpr uint8_t COMPANION_SEND_PARAM_LENGTH = FRAME_OVERHEAD + FCU_DATA_LEN_PARAM;
 constexpr uint8_t COMPANION_SEND_NAV_LENGTH   = FRAME_OVERHEAD + FCU_DATA_LEN_NAV_STATUS;
-constexpr uint8_t COMPANION_SEND_MOTION_LENGTH = FRAME_OVERHEAD + FCU_DATA_LEN_MOTION;
 
 constexpr uint32_t PACKET_TIMEOUT_MS        = 200;
 // 非零速度后无新速度帧超过此时长则停车（丢控兜底，不置 fault bit7）
@@ -409,7 +378,7 @@ struct ParamReadData {
 
 // NCU 0x05 系统控制数据体（1 字节）
 struct SystemCtrlData {
-    uint8_t command;  // SYS_CMD_ESTOP / ESTOP_CLEAR / REBOOT / SHUTDOWN / ARM / DISARM
+    uint8_t command;  // SYS_CMD_ESTOP / ESTOP_CLEAR / REBOOT / SHUTDOWN
 };
 
 // NCU 0x06 位置导航数据体（15 字节）
@@ -426,6 +395,10 @@ struct StatusFeedbackData {
     uint8_t  battery_percent;  // 电池电量百分比
     int32_t  longitude;        // 度×1e7
     int32_t  latitude;
+    uint16_t heading;          // 0~36000, 0.01°；与 ahrs.yaw_sensor（厘度）同语义
+    int16_t  velocity;         // 地速 cm/s（AHRS groundspeed）
+    int16_t  left_track_vel;   // WENC instance 0
+    int16_t  right_track_vel;  // WENC2 instance 1
     int16_t  roll;             // 0.01°
     int16_t  pitch;
     uint8_t  control_mode;     // ControlMode；非 VGSL 时 STANDBY
@@ -436,34 +409,9 @@ struct StatusFeedbackData {
     uint16_t range_left_in_cm;    // 左内：拷贝 left_out
     uint16_t range_right_in_cm;   // 右内：拷贝 right_out
     uint16_t range_right_out_cm;  // 右外 cm（真传感器）
-    uint8_t  vehicle_flags;       // VEHICLE_FLAG_ARMED 等；bit1~7 预留填 0
-    int16_t  imu_temp_cdeg;      // IMU 温度 0.01°C；无效 IMU_TEMP_INVALID_CDEG
 };
 static_assert(sizeof(StatusFeedbackData) == FCU_DATA_LEN_STATUS,
               "StatusFeedbackData size must match FCU_DATA_LEN_STATUS");
-
-// FCU 0x05 运动反馈（40 字节，100Hz）；车辆 FRD；定位/控车共用
-struct MotionFeedbackData {
-    uint32_t sample_time_us;      // FCU 单调时钟 us；优先 INS last update
-    uint32_t sequence;            // 成功发送后递增
-    uint16_t boot_id;              // 每次启动变化；0 保留
-    uint8_t  imu_status;          // MOTION_IMU_GYRO_OK / ACCEL_OK
-    uint8_t  enc_flags;           // MOTION_ENC_LEFT_VALID / RIGHT_VALID
-    uint16_t heading;             // 0~36000, 0.01°；ahrs.yaw_sensor
-    int16_t  velocity;            // 地速 cm/s（AHRS groundspeed）
-    int16_t  left_track_vel;      // WENC instance 0，cm/s
-    int16_t  right_track_vel;     // WENC2 instance 1
-    int16_t  ax;                  // 机体加速度 cm/s²（INS get_accel，含重力比力）
-    int16_t  ay;
-    int16_t  az;
-    int16_t  gyro_x;              // 机体陀螺 0.01°/s（INS get_gyro）
-    int16_t  gyro_y;
-    int16_t  gyro_z;              // 0.01°/s；+右转 / -左转
-    int32_t  enc_left;            // 左轮有符号累计 ticks（WENC0 distance_count）
-    int32_t  enc_right;           // 右轮有符号累计 ticks（WENC1）
-};
-static_assert(sizeof(MotionFeedbackData) == FCU_DATA_LEN_MOTION,
-              "MotionFeedbackData size must match FCU_DATA_LEN_MOTION");
 
 // FCU 0x02 指令应答数据体（2 字节）
 struct CmdAckData {
