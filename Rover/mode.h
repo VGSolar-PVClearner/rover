@@ -1298,10 +1298,15 @@ private:
     // 非零速度帧时刻；0=看门狗关闭。仅运动中丢控超时停车，不置 bit7
     uint32_t _last_ncu_cmd_ms;
     uint32_t _turn_phase_start_ms;
+    // STOPPING：轮速持续低于阈值的起始时刻；0=尚未进入候选停稳
+    uint32_t _turn_wheel_stop_since_ms;
     bool _turn_frozen;  // 安全事件后暂停转弯阶段推进
     // 运动丢控触发 SAFETY_HOLD_NCU_COMM 后，需再收到 NCU 指令才允许自动恢复吸盘
     bool _await_ncu_after_lost_motion;
     bool _turn_timeout_aborted;  // 转角超时已写 NTRN Abort，抬盘完成不再写 Done
+
+    // 转弯停车：WENC 线速度低于 ATC_STOP_SPEED 后需再保持该时长才离开 STOPPING
+    static constexpr uint32_t TURN_WHEEL_STOP_DEBOUNCE_MS = 200;
 
     // 倾角/运动丢控触发的吸盘保持（可叠加）；try_recover_safety_hold() 统一恢复
     static constexpr uint8_t SAFETY_HOLD_TILT     = 1 << 0;
@@ -1347,6 +1352,9 @@ private:
     void complete_turn();
     void set_turn_phase(TurnPhase phase);
     void log_turn_event(uint8_t action, uint8_t accepted, uint8_t reject_reason) const;
+    // 有健康 WENC 时：左右轮 |rate*radius| 均 ≤ ATC_STOP_SPEED；无 WENC 则返回 true（退回 stop_vehicle）
+    bool wheels_nearly_stopped() const;
+    bool turn_wheel_encoders_usable() const;
     // 未解锁：停刷、吸盘释放/安全位，中止 TURN/NAV/YAW 运动
     void apply_disarmed_actuator_safety();
     // 清零速度/偏航率目标并切 ModeGuided 到 Stop，避免旧目标残留

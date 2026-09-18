@@ -103,6 +103,7 @@ ModeVGSolar::ModeVGSolar(void) :
     _arrival_yaw_target_cd(0.0f),
     _last_ncu_cmd_ms(0),
     _turn_phase_start_ms(0),
+    _turn_wheel_stop_since_ms(0),
     _turn_frozen(false),
     _await_ncu_after_lost_motion(false),
     _turn_timeout_aborted(false),
@@ -632,8 +633,8 @@ void ModeVGSolar::read_companion_commands()
         }
 
         // 零速：正常停车，关闭看门狗（静默不再判丢控）
-        const bool yawrate_idle = (cmd.control_mode == SPEED_MODE_YAWRATE) &&
-                                  (cmd.yaw_data == 0);
+        // YAWRATE：仅看 velocity==0（忽略残留 yaw_data），避免视觉纠偏脏帧进不了真停
+        const bool yawrate_idle = (cmd.control_mode == SPEED_MODE_YAWRATE);
         const bool yaw_idle = (cmd.control_mode == SPEED_MODE_YAW);
         if (cmd.velocity == 0 && (yawrate_idle || yaw_idle)) {
             clear_speed_motion_state();
@@ -903,6 +904,8 @@ void ModeVGSolar::set_turn_phase(TurnPhase phase)
         gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN lowering suction");
         break;
     case TurnPhase::TURNING:
+        // 停车阶段速度环 I 项清掉，避免切入差速时前冲
+        attitude_control.relax_I();
         gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN rotating");
         break;
     case TurnPhase::RAISE_SUCTION:
@@ -911,6 +914,41 @@ void ModeVGSolar::set_turn_phase(TurnPhase phase)
     default:
         break;
     }
+}
+
+bool ModeVGSolar::turn_wheel_encoders_usable() const
+{
+    const AP_WheelEncoder *wenc = AP::wheelencoder();
+    if (wenc == nullptr) {
+        return false;
+    }
+    for (uint8_t i = 0; i < wenc->num_sensors(); i++) {
+        if (wenc->enabled(i) && wenc->healthy(i)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ModeVGSolar::wheels_nearly_stopped() const
+{
+    // 无可用 WENC：交给 stop_vehicle / ATC 地速判据
+    if (!turn_wheel_encoders_usable()) {
+        return true;
+    }
+
+    const AP_WheelEncoder *wenc = AP::wheelencoder();
+    const float stop_speed = attitude_control.get_stop_speed();
+    for (uint8_t i = 0; i < wenc->num_sensors(); i++) {
+        if (!wenc->enabled(i) || !wenc->healthy(i)) {
+            continue;
+        }
+        const float speed_mps = fabsf(wenc->get_rate(i) * wenc->get_wheel_radius(i));
+        if (speed_mps > stop_speed) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void ModeVGSolar::log_turn_event(uint8_t action, uint8_t accepted, uint8_t reject_reason) const
@@ -1050,7 +1088,7 @@ void ModeVGSolar::try_recover_safety_hold()
 }
 
 // 转弯序列（NCU 0x02）
-// 阶段：停车 → 等稳 500ms → lower 吸盘 → 原地/行进转弯 → raise 吸盘 → 回待机
+// 阶段：清运动状态 → WENC/地速停车(防抖) → 等稳 500ms(持续抱刹) → lower → 原地/行进转弯 → raise → 待机
 bool ModeVGSolar::start_turn(const TurnData &cmd)
 {
     auto &cc = rover.companion_computer;
@@ -1091,12 +1129,17 @@ bool ModeVGSolar::start_turn(const TurnData &cmd)
     AP::suction_cup().unfreeze();
     _turn_frozen = false;
 
+    // 进转弯前先清 YAWRATE/速度环残留，避免 STOPPING 带着旧目标滑行
+    clear_speed_motion_state();
+
     _vg_submode = VGSubMode::TURN;
     _turn_direction = cmd.direction;
     _turn_mode_type = cmd.turn_mode;
     _turn_target_angle_deg = cmd.target_angle * 0.01f;
     _turn_angular_vel_dps = MAX(cmd.angular_vel * 0.01f, 1.0f);
     _turn_phase = TurnPhase::STOPPING;
+    _turn_phase_start_ms = AP_HAL::millis();
+    _turn_wheel_stop_since_ms = 0;
     _turn_accumulated_deg = 0.0f;
     _turn_timeout_aborted = false;
 
@@ -1124,17 +1167,34 @@ void ModeVGSolar::update_turn()
     switch (_turn_phase) {
 
     case TurnPhase::STOPPING: {
-        // 减速至零速后进入等待
-        const bool stopped = stop_vehicle();
-        if (stopped) {
-            set_turn_phase(TurnPhase::WAIT_STOPPED);
-            _turn_phase_start_ms = now;
+        // 持续刹车；有健康 WENC 时以轮速为准，否则仍用 stop_vehicle 地速判据
+        const bool ahrs_stopped = stop_vehicle();
+        const bool candidate = turn_wheel_encoders_usable()
+                               ? wheels_nearly_stopped()
+                               : ahrs_stopped;
+        if (candidate) {
+            if (_turn_wheel_stop_since_ms == 0) {
+                _turn_wheel_stop_since_ms = now;
+            } else if ((now - _turn_wheel_stop_since_ms) >= TURN_WHEEL_STOP_DEBOUNCE_MS) {
+                attitude_control.relax_I();
+                set_turn_phase(TurnPhase::WAIT_STOPPED);
+                _turn_phase_start_ms = now;
+                _turn_wheel_stop_since_ms = 0;
+            }
+        } else {
+            _turn_wheel_stop_since_ms = 0;
         }
         break;
     }
 
     case TurnPhase::WAIT_STOPPED: {
-        // 停稳 500ms 后再放吸盘，避免惯性滑动
+        // 等稳期间继续抱刹；轮速又起来则退回 STOPPING
+        stop_vehicle();
+        if (turn_wheel_encoders_usable() && !wheels_nearly_stopped()) {
+            set_turn_phase(TurnPhase::STOPPING);
+            _turn_wheel_stop_since_ms = 0;
+            break;
+        }
         if (now - _turn_phase_start_ms > 500) {
             set_turn_phase(TurnPhase::LOWER_SUCTION);
             _turn_phase_start_ms = now;
@@ -1143,6 +1203,8 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::LOWER_SUCTION: {
+        // 放盘期间持续停车，避免「气压已动、履带还在转」
+        stop_vehicle();
         // 异步 lower；is_lowered() 后进入 TURNING（motion_state=0x03）
         if (!scup.is_busy() && !scup.is_lowered()) {
             if (!scup.lower()) {
@@ -1201,6 +1263,8 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::RAISE_SUCTION: {
+        // 抬盘期间继续抱刹
+        stop_vehicle();
         // 异步 raise；is_raised() 后 complete_turn() 回待机
         // raise() 拒绝 _frozen：若仍冻结则先 unfreeze（与 release_safety_hold_suction 一致）
         if (!scup.is_busy() && !scup.is_raised()) {
