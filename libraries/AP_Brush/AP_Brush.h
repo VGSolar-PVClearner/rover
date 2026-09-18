@@ -15,7 +15,10 @@
  *   k_vgsolar_brush_front = 157  前滚刷
  *   k_vgsolar_brush_rear  = 158  后滚刷
  *
- * 电调约定：1000 µs = 停转，2000 µs = 满速；power_pct 1~100% 线性映射其间。
+ * 电调约定（前后方向相反）：
+ *   前：1650 µs = 停转，2000 µs = 满速（功率↑ → PWM↑）
+ *   后：1350 µs = 停转，1000 µs = 满速（功率↑ → PWM↓）
+ *   power_pct 1~100% 在各自 [STOP, MAX] 间线性映射。
  * 安全：仅 _active=true（VGSL 模式内）且已 soft_armed 时才输出非停转 PWM；
  *       非活动或未解锁时 update()/set_active 只停刷或更新期望。
  */
@@ -33,13 +36,13 @@ public:
         return _singleton;
     }
 
-    // ModeVGSolar::_enter/_exit 调用；false 时立即输出 1000 µs 停刷
+    // ModeVGSolar::_enter/_exit 调用；false 时立即输出各刷停转 PWM
     void set_active(bool active);
 
     // 更新期望开关与功率；仅 active 时写 PWM（CompanionComputer 参数写入后调用）
     void update(bool front_on, bool rear_on, uint8_t power_pct);
 
-    // 清零期望状态并强制 1000 µs；急停/低电压/心跳超时/退出 VGSL 时由上层调用
+    // 清零期望状态并强制停转 PWM；急停/低电压/心跳超时/退出 VGSL 时由上层调用
     void stop_all();
 
 private:
@@ -59,11 +62,16 @@ private:
     uint32_t _last_log_ms;
 
     static constexpr uint32_t LOG_INTERVAL_MS = 2000;
-    static constexpr uint16_t PWM_STOP_US = 1000;
-    static constexpr uint16_t PWM_MAX_US = 2000;
 
-    // on=false 或 power=0 → STOP；否则线性插值 [STOP, MAX]
-    uint16_t calc_pwm_us(bool on, uint8_t power_pct) const;
+    // 前滚刷：停 1650 → 满 2000
+    static constexpr uint16_t FRONT_PWM_STOP_US = 1650;
+    static constexpr uint16_t FRONT_PWM_MAX_US  = 2000;
+    // 后滚刷：停 1350 → 满 1000（反向）
+    static constexpr uint16_t REAR_PWM_STOP_US  = 1350;
+    static constexpr uint16_t REAR_PWM_MAX_US   = 1000;
+
+    // on=false 或 power=0 → STOP；否则线性插值 [STOP, MAX]（MAX 可小于 STOP）
+    static uint16_t calc_pwm_us(bool on, uint8_t power_pct, uint16_t stop_us, uint16_t max_us);
     void write_outputs(bool front_on, bool rear_on, uint8_t power_pct);
     void log_brush_status(bool front_on, bool rear_on, uint8_t power_pct, uint16_t front_pwm, uint16_t rear_pwm);
 };

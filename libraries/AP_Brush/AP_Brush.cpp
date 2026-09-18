@@ -23,8 +23,8 @@ AP_Brush::AP_Brush()
     _front_on = false;
     _rear_on = false;
     _power_pct = 0;
-    _last_front_pwm = PWM_STOP_US;
-    _last_rear_pwm = PWM_STOP_US;
+    _last_front_pwm = FRONT_PWM_STOP_US;
+    _last_rear_pwm = REAR_PWM_STOP_US;
     _last_front_on = false;
     _last_rear_on = false;
     _last_power_pct = 0;
@@ -73,24 +73,25 @@ void AP_Brush::stop_all()
     _front_on = false;
     _rear_on = false;
     _power_pct = 0;
-    // 无论 active 与否都写 1000 µs，确保硬件停转
+    // 无论 active 与否都写各刷停转 PWM，确保硬件停转
     write_outputs(false, false, 0);
 }
 
-uint16_t AP_Brush::calc_pwm_us(bool on, uint8_t power_pct) const
+uint16_t AP_Brush::calc_pwm_us(bool on, uint8_t power_pct, uint16_t stop_us, uint16_t max_us)
 {
     if (!on || power_pct == 0) {
-        return PWM_STOP_US;
+        return stop_us;
     }
 
     const float scaled = constrain_float(float(power_pct) / 100.0f, 0.0f, 1.0f);
-    return uint16_t(PWM_STOP_US + scaled * float(PWM_MAX_US - PWM_STOP_US));
+    // max 可小于 stop（后刷反向）：功率↑ 时 PWM 从 stop 向 max 插值
+    return uint16_t(lroundf(float(stop_us) + scaled * float(int32_t(max_us) - int32_t(stop_us))));
 }
 
 void AP_Brush::write_outputs(bool front_on, bool rear_on, uint8_t power_pct)
 {
-    const uint16_t front_pwm = calc_pwm_us(front_on, power_pct);
-    const uint16_t rear_pwm = calc_pwm_us(rear_on, power_pct);
+    const uint16_t front_pwm = calc_pwm_us(front_on, power_pct, FRONT_PWM_STOP_US, FRONT_PWM_MAX_US);
+    const uint16_t rear_pwm = calc_pwm_us(rear_on, power_pct, REAR_PWM_STOP_US, REAR_PWM_MAX_US);
 
     SRV_Channels::set_output_pwm(SRV_Channel::k_vgsolar_brush_front, front_pwm);
     SRV_Channels::set_output_pwm(SRV_Channel::k_vgsolar_brush_rear, rear_pwm);
