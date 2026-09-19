@@ -1,5 +1,6 @@
 #pragma once
 
+#include <AP_Param/AP_Param.h>
 #include <SRV_Channel/SRV_Channel.h>
 #include <AP_HAL/AP_HAL.h>
 
@@ -15,12 +16,14 @@
  *   k_vgsolar_brush_front = 157  前滚刷
  *   k_vgsolar_brush_rear  = 158  后滚刷
  *
- * 电调约定（前后方向相反）：
- *   前：1650 µs = 停转，2000 µs = 满速（功率↑ → PWM↑）
- *   后：1350 µs = 停转，1000 µs = 满速（功率↑ → PWM↓）
- *   power_pct 1~100% 在各自 [STOP, MAX] 间线性映射。
+ * 电调约定（地面站可调，默认前后方向相反）：
+ *   BRUSH_F_STOP / BRUSH_F_MAX：前刷停转 / 满速 µs（默认 1500 → 2000）
+ *   BRUSH_R_STOP / BRUSH_R_MAX：后刷停转 / 满速 µs（默认 1500 → 1000）
+ *   power_pct 1~100% 在各自 [STOP, MAX] 间线性映射（MAX 可小于 STOP）。
  * 安全：仅 _active=true（VGSL 模式内）且已 soft_armed 时才输出非停转 PWM；
  *       非活动或未解锁时 update()/set_active 只停刷或更新期望。
+ *
+ * 地面站参数前缀 BRUSH_*；实例挂在 Rover ParametersG2::brush。
  */
 class AP_Brush
 {
@@ -35,6 +38,8 @@ public:
     {
         return _singleton;
     }
+
+    static const struct AP_Param::GroupInfo var_info[];
 
     // ModeVGSolar::_enter/_exit 调用；false 时立即输出各刷停转 PWM
     void set_active(bool active);
@@ -63,15 +68,15 @@ private:
 
     static constexpr uint32_t LOG_INTERVAL_MS = 2000;
 
-    // 前滚刷：停 1650 → 满 2000
-    static constexpr uint16_t FRONT_PWM_STOP_US = 1650;
-    static constexpr uint16_t FRONT_PWM_MAX_US  = 2000;
-    // 后滚刷：停 1350 → 满 1000（反向）
-    static constexpr uint16_t REAR_PWM_STOP_US  = 1350;
-    static constexpr uint16_t REAR_PWM_MAX_US   = 1000;
+    // 前/后刷：停转与满速 PWM（µs），地面站 BRUSH_F_*/BRUSH_R_*
+    AP_Int16 _front_pwm_stop;
+    AP_Int16 _front_pwm_max;
+    AP_Int16 _rear_pwm_stop;
+    AP_Int16 _rear_pwm_max;
 
     // on=false 或 power=0 → STOP；否则线性插值 [STOP, MAX]（MAX 可小于 STOP）
     static uint16_t calc_pwm_us(bool on, uint8_t power_pct, uint16_t stop_us, uint16_t max_us);
+    static uint16_t clamp_pwm_us(int16_t pwm_us);
     void write_outputs(bool front_on, bool rear_on, uint8_t power_pct);
     void log_brush_status(bool front_on, bool rear_on, uint8_t power_pct, uint16_t front_pwm, uint16_t rear_pwm);
 };
