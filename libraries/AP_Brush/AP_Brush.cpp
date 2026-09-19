@@ -12,6 +12,43 @@ extern const AP_HAL::HAL &hal;
 
 AP_Brush *AP_Brush::_singleton;
 
+const AP_Param::GroupInfo AP_Brush::var_info[] = {
+
+    // @Param: F_STOP
+    // @DisplayName: Front brush stop PWM
+    // @Description: Front roller brush PWM at stop (µs). Power maps from F_STOP toward F_MAX.
+    // @Range: 1000 2000
+    // @Units: us
+    // @User: Standard
+    AP_GROUPINFO("F_STOP", 1, AP_Brush, _front_pwm_stop, 1500),
+
+    // @Param: F_MAX
+    // @DisplayName: Front brush max PWM
+    // @Description: Front roller brush PWM at 100% power (µs). May be above or below F_STOP.
+    // @Range: 1000 2000
+    // @Units: us
+    // @User: Standard
+    AP_GROUPINFO("F_MAX", 2, AP_Brush, _front_pwm_max, 2000),
+
+    // @Param: R_STOP
+    // @DisplayName: Rear brush stop PWM
+    // @Description: Rear roller brush PWM at stop (µs). Power maps from R_STOP toward R_MAX.
+    // @Range: 1000 2000
+    // @Units: us
+    // @User: Standard
+    AP_GROUPINFO("R_STOP", 3, AP_Brush, _rear_pwm_stop, 1500),
+
+    // @Param: R_MAX
+    // @DisplayName: Rear brush max PWM
+    // @Description: Rear roller brush PWM at 100% power (µs). May be above or below R_STOP (e.g. reverse direction).
+    // @Range: 1000 2000
+    // @Units: us
+    // @User: Standard
+    AP_GROUPINFO("R_MAX", 4, AP_Brush, _rear_pwm_max, 1000),
+
+    AP_GROUPEND
+};
+
 AP_Brush::AP_Brush()
 {
     if (_singleton != nullptr) {
@@ -19,12 +56,14 @@ AP_Brush::AP_Brush()
     }
     _singleton = this;
 
+    AP_Param::setup_object_defaults(this, var_info);
+
     _active = false;
     _front_on = false;
     _rear_on = false;
     _power_pct = 0;
-    _last_front_pwm = PWM_STOP_US;
-    _last_rear_pwm = PWM_STOP_US;
+    _last_front_pwm = 1500;
+    _last_rear_pwm = 1500;
     _last_front_on = false;
     _last_rear_on = false;
     _last_power_pct = 0;
@@ -73,24 +112,35 @@ void AP_Brush::stop_all()
     _front_on = false;
     _rear_on = false;
     _power_pct = 0;
-    // 无论 active 与否都写 1000 µs，确保硬件停转
+    // 无论 active 与否都写各刷停转 PWM，确保硬件停转
     write_outputs(false, false, 0);
 }
 
-uint16_t AP_Brush::calc_pwm_us(bool on, uint8_t power_pct) const
+uint16_t AP_Brush::clamp_pwm_us(int16_t pwm_us)
+{
+    return uint16_t(constrain_int16(pwm_us, 1000, 2000));
+}
+
+uint16_t AP_Brush::calc_pwm_us(bool on, uint8_t power_pct, uint16_t stop_us, uint16_t max_us)
 {
     if (!on || power_pct == 0) {
-        return PWM_STOP_US;
+        return stop_us;
     }
 
     const float scaled = constrain_float(float(power_pct) / 100.0f, 0.0f, 1.0f);
-    return uint16_t(PWM_STOP_US + scaled * float(PWM_MAX_US - PWM_STOP_US));
+    // max 可小于 stop（后刷反向）：功率↑ 时 PWM 从 stop 向 max 插值
+    return uint16_t(lroundf(float(stop_us) + scaled * float(int32_t(max_us) - int32_t(stop_us))));
 }
 
 void AP_Brush::write_outputs(bool front_on, bool rear_on, uint8_t power_pct)
 {
-    const uint16_t front_pwm = calc_pwm_us(front_on, power_pct);
-    const uint16_t rear_pwm = calc_pwm_us(rear_on, power_pct);
+    const uint16_t front_stop = clamp_pwm_us(_front_pwm_stop);
+    const uint16_t front_max = clamp_pwm_us(_front_pwm_max);
+    const uint16_t rear_stop = clamp_pwm_us(_rear_pwm_stop);
+    const uint16_t rear_max = clamp_pwm_us(_rear_pwm_max);
+
+    const uint16_t front_pwm = calc_pwm_us(front_on, power_pct, front_stop, front_max);
+    const uint16_t rear_pwm = calc_pwm_us(rear_on, power_pct, rear_stop, rear_max);
 
     SRV_Channels::set_output_pwm(SRV_Channel::k_vgsolar_brush_front, front_pwm);
     SRV_Channels::set_output_pwm(SRV_Channel::k_vgsolar_brush_rear, rear_pwm);
@@ -141,5 +191,3 @@ AP_Brush &brush()
 }
 
 }
-
-static AP_Brush ap_brush_singleton;

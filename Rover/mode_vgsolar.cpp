@@ -26,7 +26,8 @@
  * NCU 指令优先级（read_companion_commands）：系统控制 > 转弯 > 导航 > 速度
  * 安全：倾角>30° 或 NCU 运动丢控超时（NCU_HEARTBEAT_TIMEOUT_MS）→ freeze 吸盘 + safety_hold；条件恢复后 raise
  *       未解锁 → 滚刷/气泵/气阀/吸盘强制安全位，禁止运动类 NCU 指令
- *       LEFT_OUT/RIGHT_OUT 距离 > VGS_RF_MAX 或无效 → ESTOP（需 NCU 解除）；≤ RF_MAX 正常
+ *       超声：>VGS_RF_MAX/无效时，有 WENC 按 VGS_RF_GAP 位移区分过缝与掉边（掉边停再退 D+5cm）；
+ *             无 WENC 则 VGS_RF_GAP_MS 后硬 ESTOP；回退失败需 NCU 解除急停
  *
  */
 
@@ -67,12 +68,44 @@ const AP_Param::GroupInfo ModeVGSolar::var_info[] = {
     AP_GROUPINFO("TURN_SPD", 6, ModeVGSolar, _turn_max_speed, 0.3f),
 
     // @Param: RF_MAX
-    // @DisplayName: VG Solar rangefinder safe max
-    // @Description: Inclusive upper limit (cm) for LEFT_OUT/RIGHT_OUT; distance > RF_MAX or invalid triggers ESTOP
+    // @DisplayName: VG Solar rangefinder on-panel max
+    // @Description: Inclusive upper limit (cm) for LEFT_OUT/RIGHT_OUT; distance <= RF_MAX and Good is on-panel. Above RF_MAX or invalid starts gap/edge tracking.
     // @Range: 1 450
     // @Units: cm
     // @User: Standard
     AP_GROUPINFO("RF_MAX", 8, ModeVGSolar, _rf_safe_max_cm, 15),
+
+    // @Param: RF_BLOCK_GAP
+    // @DisplayName: VG Solar panel gap travel allow
+    // @Description: With healthy WENC: while ultrasonic is abnormal, travel up to this many cm is treated as crossing a panel gap. Beyond this triggers stop-and-reverse recovery (then ESTOP on failure). Include margin in this value.
+    // @Range: 1 100
+    // @Units: cm
+    // @User: Standard
+    AP_GROUPINFO("RF_BLOCK_GAP", 9, ModeVGSolar, _rf_gap_cm, 4),
+
+    // @Param: RF_GAP_MS
+    // @DisplayName: VG Solar rangefinder no-WENC timeout
+    // @Description: Without usable WENC: ultrasonic abnormal longer than this (ms) triggers hard ESTOP. No auto-reverse.
+    // @Range: 50 5000
+    // @Units: ms
+    // @User: Standard
+    AP_GROUPINFO("RF_GAP_MS", 10, ModeVGSolar, _rf_gap_ms, 300),
+
+    // @Param: RF_RCV_MS
+    // @DisplayName: VG Solar range edge reverse timeout
+    // @Description: Max time (ms) allowed for the reverse leg after an edge is confirmed. Timeout -> hard ESTOP.
+    // @Range: 500 15000
+    // @Units: ms
+    // @User: Standard
+    AP_GROUPINFO("RF_RCV_MS", 11, ModeVGSolar, _rf_rcv_ms, 5000),
+
+    // @Param: RF_LIM_SPD
+    // @DisplayName: VG Solar rangefinder abnormal speed limit
+    // @Description: While ultrasonic is abnormal but still within RF_BLOCK_GAP (gap crossing), clamp |speed| to this (m/s). 0 disables. Full stop/reverse still starts only after gap travel is exceeded.
+    // @Range: 0 1.0
+    // @Units: m/s
+    // @User: Standard
+    AP_GROUPINFO("RF_LIM_SPD", 12, ModeVGSolar, _rf_lim_spd, 0.12f),
 
     AP_GROUPEND
 };
@@ -103,15 +136,28 @@ ModeVGSolar::ModeVGSolar(void) :
     _arrival_yaw_target_cd(0.0f),
     _last_ncu_cmd_ms(0),
     _turn_phase_start_ms(0),
+    _turn_wheel_stop_since_ms(0),
     _turn_frozen(false),
     _await_ncu_after_lost_motion(false),
     _turn_timeout_aborted(false),
     _safety_hold_mask(0),
     _actuators_were_armed(false),
     _last_disarmed_actuator_gcs_ms(0),
-    _range_unsafe_since_ms(0)
+    _range_unsafe_since_ms(0),
+    _range_recover_phase(RangeRecoverPhase::IDLE),
+    _range_recover_start_ms(0),
+    _range_abnormal_cm(0.0f),
+    _range_reverse_cm(0.0f),
+    _range_travel_sign(1),
+    _range_dist_baseline_valid(false),
+    _range_rev_baseline_valid(false),
+    _range_speed_limit_active(false),
+    _range_stop_debounce_ms(0),
+    _range_on_panel_since_ms(0)
 {
     AP_Param::setup_object_defaults(this, var_info);
+    _range_dist0_m[0] = _range_dist0_m[1] = 0.0f;
+    _range_rev_dist0_m[0] = _range_rev_dist0_m[1] = 0.0f;
 }
 
 bool ModeVGSolar::_enter()
@@ -149,7 +195,8 @@ bool ModeVGSolar::_enter()
     AP::suction_cup().set_active(true);
     _actuators_were_armed = false;
     _last_disarmed_actuator_gcs_ms = 0;
-    _range_unsafe_since_ms = 0;
+    range_reset_abnormal_tracking();
+    _range_recover_phase = RangeRecoverPhase::IDLE;
 
     rover.companion_computer.log_nevt(NCULog::EVT_ENTER_VGSL);
     gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: entered");
@@ -199,6 +246,10 @@ void ModeVGSolar::update()
         if (_vg_submode == VGSubMode::ESTOP) {
             update_estop();
         }
+        if (range_recover_active()) {
+            _range_recover_phase = RangeRecoverPhase::IDLE;
+            range_reset_abnormal_tracking();
+        }
         return;
     }
 
@@ -227,13 +278,23 @@ void ModeVGSolar::update()
     check_ncu_timeout();
     try_recover_safety_hold();  // 倾角/NCU 条件满足后自动抬吸盘
 
-    if (_vg_submode != VGSubMode::ESTOP) {
+    if (_vg_submode != VGSubMode::ESTOP && !range_recover_active()) {
         check_rangefinder_safety();
     }
 
     if (_vg_submode == VGSubMode::ESTOP) {
         update_estop();
         return;
+    }
+
+    if (range_recover_active()) {
+        update_range_recover();
+        return;
+    }
+
+    // 超声异常但未超 GAP：限速（过缝轻减速；掉边前少冲出）
+    if (_range_speed_limit_active) {
+        apply_range_abnormal_speed_limit();
     }
 
     // 安全保持期间禁止 NAV/YAW/YAWRATE 继续运动；TURN 仅 _turn_frozen 路径
@@ -442,8 +503,8 @@ void ModeVGSolar::read_companion_commands()
         }
     }
 
-    if (_vg_submode == VGSubMode::ESTOP) {
-        // 急停期间丢弃运动指令并记拒因，避免 ESTOP 解除后旧指令突然生效
+    if (_vg_submode == VGSubMode::ESTOP || range_recover_active()) {
+        // 急停 / 超声掉边回退期间丢弃运动指令，避免旧速度突然生效
         if (cc.is_new_turn()) {
             cc.clear_new_turn_flag();
             const TurnData &cmd = cc.get_latest_turn();
@@ -454,6 +515,9 @@ void ModeVGSolar::read_companion_commands()
             cc.clear_new_speed_flag();
             const SpeedCtrlData &cmd = cc.get_latest_speed_ctrl();
             cc.log_nspd(cmd.control_mode, cmd.velocity, cmd.yaw_data, 0, NCULog::REJECT_ESTOP);
+        }
+        if (cc.is_new_position()) {
+            cc.clear_new_position_flag();
         }
         return;
     }
@@ -632,8 +696,8 @@ void ModeVGSolar::read_companion_commands()
         }
 
         // 零速：正常停车，关闭看门狗（静默不再判丢控）
-        const bool yawrate_idle = (cmd.control_mode == SPEED_MODE_YAWRATE) &&
-                                  (cmd.yaw_data == 0);
+        // YAWRATE：仅看 velocity==0（忽略残留 yaw_data），避免视觉纠偏脏帧进不了真停
+        const bool yawrate_idle = (cmd.control_mode == SPEED_MODE_YAWRATE);
         const bool yaw_idle = (cmd.control_mode == SPEED_MODE_YAW);
         if (cmd.velocity == 0 && (yawrate_idle || yaw_idle)) {
             clear_speed_motion_state();
@@ -710,7 +774,10 @@ void ModeVGSolar::update_nav()
         return;
     }
 
-    //沿航点导航至目标区域（巡航速度在收到导航指令时已设置）
+    // 沿航点导航至目标区域；超声过缝限速时每周期刷新期望速度
+    if (_range_speed_limit_active) {
+        apply_nav_speed();
+    }
     ModeGuided::update();
 
     if (nav_position_reached()) {
@@ -769,7 +836,11 @@ void ModeVGSolar::complete_nav_arrived()
 void ModeVGSolar::apply_nav_speed()
 {
     // set_desired_speed 只接受正值；倒车方向由 wp_nav.set_reversed 控制
-    set_desired_speed(fabsf(_cruise_speed_ms));
+    float spd = fabsf(_cruise_speed_ms);
+    if (_range_speed_limit_active && _rf_lim_spd > 0.0f) {
+        spd = MIN(spd, float(_rf_lim_spd));
+    }
+    set_desired_speed(spd);
 }
 
 void ModeVGSolar::update_estop()
@@ -792,56 +863,345 @@ void ModeVGSolar::enter_estop(const char *gcs_msg)
     _last_ncu_cmd_ms = 0;
     _await_ncu_after_lost_motion = false;
     clear_safety_hold_mask();
+    // 直行中急停：先清目标/I 项，避免 stop_vehicle 仍被积分顶着出油门
+    clear_speed_motion_state();
+    range_reset_abnormal_tracking();
+    _range_recover_phase = RangeRecoverPhase::IDLE;
     rover.companion_computer.stop_brushes();
     AP::suction_cup().emergency_release();
     gcs().send_text(MAV_SEVERITY_WARNING, "%s", gcs_msg != nullptr ? gcs_msg : "VG_SOLAR: ESTOP");
 }
 
+bool ModeVGSolar::rangefinder_channel_unsafe(enum Rotation orientation) const
+{
+#if AP_RANGEFINDER_ENABLED
+    const RangeFinder *rfnd = RangeFinder::get_singleton();
+    if (rfnd == nullptr || !rfnd->has_orientation(orientation)) {
+        return true;
+    }
+    if (rfnd->status_orient(orientation) != RangeFinder::Status::Good) {
+        return true;
+    }
+    const uint16_t dist_cm = rfnd->distance_cm_orient(orientation);
+    const int16_t max_cm = _rf_safe_max_cm;
+    if (max_cm < 1) {
+        return true;
+    }
+    return dist_cm > (uint16_t)max_cm;
+#else
+    (void)orientation;
+    return true;
+#endif
+}
+
+bool ModeVGSolar::rangefinder_on_panel() const
+{
+    return !rangefinder_channel_unsafe(ROTATION_YAW_315) &&
+           !rangefinder_channel_unsafe(ROTATION_YAW_45);
+}
+
+void ModeVGSolar::range_reset_abnormal_tracking()
+{
+    _range_unsafe_since_ms = 0;
+    _range_abnormal_cm = 0.0f;
+    _range_dist_baseline_valid = false;
+    _range_dist0_m[0] = _range_dist0_m[1] = 0.0f;
+    _range_speed_limit_active = false;
+    // 保留 _range_travel_sign 供下次异常沿用；未知时 begin 里会落到 +1
+}
+
+void ModeVGSolar::apply_range_abnormal_speed_limit()
+{
+    const float lim = _rf_lim_spd;
+    if (lim <= 0.0f) {
+        return;
+    }
+    // 钳制 NCU 目标与 Guided 期望速度，速度环会自动减速
+    if (_target_speed_ms > lim) {
+        _target_speed_ms = lim;
+    } else if (_target_speed_ms < -lim) {
+        _target_speed_ms = -lim;
+    }
+    if (_desired_speed > lim) {
+        _desired_speed = lim;
+    } else if (_desired_speed < -lim) {
+        _desired_speed = -lim;
+    }
+}
+
+void ModeVGSolar::range_capture_wheel_baseline(float dest_m[2]) const
+{
+    dest_m[0] = dest_m[1] = 0.0f;
+    const AP_WheelEncoder *wenc = AP::wheelencoder();
+    if (wenc == nullptr) {
+        return;
+    }
+    for (uint8_t i = 0; i < MIN(wenc->num_sensors(), (uint8_t)2); i++) {
+        if (wenc->enabled(i) && wenc->healthy(i)) {
+            dest_m[i] = wenc->get_distance(i);
+        }
+    }
+}
+
+float ModeVGSolar::range_travel_cm_from_baseline(const float baseline_m[2]) const
+{
+    const AP_WheelEncoder *wenc = AP::wheelencoder();
+    if (wenc == nullptr) {
+        return 0.0f;
+    }
+    float sum_m = 0.0f;
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < MIN(wenc->num_sensors(), (uint8_t)2); i++) {
+        if (!wenc->enabled(i) || !wenc->healthy(i)) {
+            continue;
+        }
+        sum_m += fabsf(wenc->get_distance(i) - baseline_m[i]);
+        n++;
+    }
+    if (n == 0) {
+        return 0.0f;
+    }
+    return (sum_m / float(n)) * 100.0f;
+}
+
+void ModeVGSolar::range_update_travel_sign()
+{
+    const AP_WheelEncoder *wenc = AP::wheelencoder();
+    if (wenc == nullptr) {
+        return;
+    }
+    float sum_mps = 0.0f;
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < wenc->num_sensors(); i++) {
+        if (!wenc->enabled(i) || !wenc->healthy(i)) {
+            continue;
+        }
+        sum_mps += wenc->get_rate(i) * wenc->get_wheel_radius(i);
+        n++;
+    }
+    if (n == 0) {
+        return;
+    }
+    const float avg = sum_mps / float(n);
+    // 约 2 cm/s 以上才更新方向，避免噪声翻符号
+    if (fabsf(avg) > 0.02f) {
+        _range_travel_sign = (avg > 0.0f) ? 1 : -1;
+    }
+}
+
+void ModeVGSolar::begin_range_recover(float abnormal_cm)
+{
+    if (range_recover_active()) {
+        return;
+    }
+
+    if (_vg_submode == VGSubMode::TURN && _turn_phase != TurnPhase::IDLE) {
+        log_turn_event(NCULog::TURN_ACTION_ABORT, 1, NCULog::REJECT_NONE);
+        _turn_phase = TurnPhase::IDLE;
+        _turn_frozen = false;
+        _turn_timeout_aborted = true;
+    }
+    if (_vg_submode == VGSubMode::NAV) {
+        stop_vehicle();
+        g2.wp_nav.set_reversed(false);
+        _nav_phase = NavPhase::CRUISE;
+        _nav_report_state = NavReportState::CANCELLED;
+    }
+
+    clear_speed_motion_state();
+    AP::suction_cup().emergency_release();
+    rover.companion_computer.stop_brushes();
+    _range_speed_limit_active = false;
+
+    if (_range_travel_sign == 0) {
+        _range_travel_sign = 1;
+    }
+    _range_reverse_cm = MAX(abnormal_cm, 0.0f) + RANGE_RECOVER_EXTRA_CM;
+    _range_recover_phase = RangeRecoverPhase::STOPPING;
+    _range_recover_start_ms = AP_HAL::millis();
+    _range_stop_debounce_ms = 0;
+    _range_on_panel_since_ms = 0;
+    _range_rev_baseline_valid = false;
+    _last_ncu_cmd_ms = 0;
+    _vg_submode = VGSubMode::STANDBY;
+
+    // 最终回退距离在停稳进入 REVERSING 时按「异常总位移+余量」重算（含刹停滑行）
+    gcs().send_text(MAV_SEVERITY_WARNING,
+                    "VG_SOLAR: range edge, stopping (trig %.0fcm)",
+                    double(abnormal_cm));
+}
+
+void ModeVGSolar::range_enter_reversing(uint32_t now_ms)
+{
+    attitude_control.relax_I();
+
+    // 从超声异常起点到停稳的总位移（含 GAP 触发后的滑行）+ 5cm
+    if (_range_dist_baseline_valid && turn_wheel_encoders_usable()) {
+        const float overshoot_cm = range_travel_cm_from_baseline(_range_dist0_m);
+        _range_reverse_cm = overshoot_cm + RANGE_RECOVER_EXTRA_CM;
+    } else {
+        _range_reverse_cm = MAX(_range_reverse_cm, RANGE_RECOVER_EXTRA_CM);
+    }
+
+    range_capture_wheel_baseline(_range_rev_dist0_m);
+    _range_rev_baseline_valid = turn_wheel_encoders_usable();
+    _range_recover_phase = RangeRecoverPhase::REVERSING;
+    _range_recover_start_ms = now_ms;
+    _range_on_panel_since_ms = 0;
+
+    gcs().send_text(MAV_SEVERITY_WARNING,
+                    "VG_SOLAR: range reverse %.0fcm",
+                    double(_range_reverse_cm));
+}
+
+void ModeVGSolar::complete_range_recover()
+{
+    clear_speed_motion_state();
+    range_reset_abnormal_tracking();
+    _range_recover_phase = RangeRecoverPhase::IDLE;
+    _range_rev_baseline_valid = false;
+    _vg_submode = VGSubMode::STANDBY;
+    gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: range recover OK, standby");
+}
+
+void ModeVGSolar::fail_range_recover_to_estop(const char *gcs_msg)
+{
+    _range_recover_phase = RangeRecoverPhase::IDLE;
+    _fault_flags |= FAULT_RANGE_SAFE;
+    enter_estop(gcs_msg != nullptr ? gcs_msg : "VG_SOLAR: ESTOP rangefinder");
+}
+
+void ModeVGSolar::update_range_recover()
+{
+    const uint32_t now = AP_HAL::millis();
+
+    switch (_range_recover_phase) {
+    case RangeRecoverPhase::STOPPING: {
+        stop_vehicle();
+        // 进回退时一般已有 WENC；中途丢失则靠超时进入 REVERSING，再在回退腿失败 ESTOP
+        const bool stopped = !turn_wheel_encoders_usable() || wheels_nearly_stopped();
+        if (stopped) {
+            if (_range_stop_debounce_ms == 0) {
+                _range_stop_debounce_ms = now;
+            } else if ((now - _range_stop_debounce_ms) >= TURN_WHEEL_STOP_DEBOUNCE_MS) {
+                range_enter_reversing(now);
+            }
+        } else {
+            _range_stop_debounce_ms = 0;
+        }
+        if (_range_recover_phase == RangeRecoverPhase::STOPPING &&
+            (now - _range_recover_start_ms) >= RANGE_RECOVER_STOP_TIMEOUT_MS) {
+            range_enter_reversing(now);
+        }
+        break;
+    }
+
+    case RangeRecoverPhase::REVERSING: {
+        // 超时：至少 RF_RCV_MS，并按回退距离/速度留余量（高速大滑行时 3s 可能不够）
+        const float need_s =
+            (_range_reverse_cm * 0.01f) / MAX(RANGE_RECOVER_SPEED_MS, 0.05f) + 1.5f;
+        const uint32_t limit_ms = MAX(uint32_t(MAX(int32_t(_rf_rcv_ms), 500)),
+                                      uint32_t(need_s * 1000.0f));
+        if ((now - _range_recover_start_ms) > limit_ms) {
+            fail_range_recover_to_estop("VG_SOLAR: ESTOP range recover timeout");
+            break;
+        }
+
+        float traveled_cm = 0.0f;
+        if (_range_rev_baseline_valid) {
+            traveled_cm = range_travel_cm_from_baseline(_range_rev_dist0_m);
+        } else {
+            // 无 WENC 无法按距离回退 → 硬 ESTOP
+            fail_range_recover_to_estop("VG_SOLAR: ESTOP range recover no WENC");
+            break;
+        }
+
+        // 必须先走完目标回退距离，禁止中途因超声闪 Good 提前成功
+        if (traveled_cm < _range_reverse_cm) {
+            _range_on_panel_since_ms = 0;
+            const float speed_ms = -float(_range_travel_sign) * RANGE_RECOVER_SPEED_MS;
+            set_desired_turn_rate_and_speed(0.0f, speed_ms);
+            ModeGuided::update();
+            break;
+        }
+
+        // 目标距离已走完：刹住，贴板 Good 需稳定 RANGE_RECOVER_ON_PANEL_MS 才成功
+        stop_vehicle();
+        if (rangefinder_on_panel()) {
+            if (_range_on_panel_since_ms == 0) {
+                _range_on_panel_since_ms = now;
+            } else if ((now - _range_on_panel_since_ms) >= RANGE_RECOVER_ON_PANEL_MS) {
+                complete_range_recover();
+            }
+        } else {
+            _range_on_panel_since_ms = 0;
+            fail_range_recover_to_estop("VG_SOLAR: ESTOP rangefinder");
+        }
+        break;
+    }
+
+    case RangeRecoverPhase::IDLE:
+    default:
+        break;
+    }
+}
+
 void ModeVGSolar::check_rangefinder_safety()
 {
-    if (_vg_submode == VGSubMode::ESTOP) {
-        _range_unsafe_since_ms = 0;
+    if (_vg_submode == VGSubMode::ESTOP || range_recover_active()) {
         return;
     }
 
-#if AP_RANGEFINDER_ENABLED
-    const auto channel_unsafe = [this](enum Rotation orientation) -> bool {
-        const RangeFinder *rfnd = RangeFinder::get_singleton();
-        if (rfnd == nullptr || !rfnd->has_orientation(orientation)) {
-            return true;  // 无效 / 未配置
-        }
-        if (rfnd->status_orient(orientation) != RangeFinder::Status::Good) {
-            return true;
-        }
-        const uint16_t dist_cm = rfnd->distance_cm_orient(orientation);
-        const int16_t max_cm = _rf_safe_max_cm;
-        if (max_cm < 1) {
-            return true;
-        }
-        // ≤ RF_MAX 正常；> RF_MAX 不正常
-        return dist_cm > (uint16_t)max_cm;
-    };
-
-    // 与状态帧一致：LEFT_OUT=YAW_315，RIGHT_OUT=YAW_45
-    const bool unsafe = channel_unsafe(ROTATION_YAW_315) || channel_unsafe(ROTATION_YAW_45);
+#if !AP_RANGEFINDER_ENABLED
+    _fault_flags |= FAULT_RANGE_SAFE;
+    enter_estop("VG_SOLAR: ESTOP rangefinder");
+    return;
+#else
+    const bool unsafe =
+        rangefinder_channel_unsafe(ROTATION_YAW_315) ||
+        rangefinder_channel_unsafe(ROTATION_YAW_45);
     const uint32_t now = AP_HAL::millis();
+
     if (!unsafe) {
-        _range_unsafe_since_ms = 0;
+        range_reset_abnormal_tracking();
         return;
     }
+
+    // —— 异常：有 WENC 记位移；无 WENC 走短时间窗 ——
+    if (turn_wheel_encoders_usable()) {
+        if (!_range_dist_baseline_valid) {
+            range_capture_wheel_baseline(_range_dist0_m);
+            _range_dist_baseline_valid = true;
+            _range_abnormal_cm = 0.0f;
+            _range_unsafe_since_ms = 0;
+        }
+        range_update_travel_sign();
+        _range_abnormal_cm = range_travel_cm_from_baseline(_range_dist0_m);
+
+        const float gap_cm = MAX(float(_rf_gap_cm), 1.0f);
+        if (_range_abnormal_cm > gap_cm) {
+            _range_speed_limit_active = false;
+            begin_range_recover(_range_abnormal_cm);
+        } else {
+            // 过缝窗口：限速，尚未满刹回退
+            _range_speed_limit_active = (_rf_lim_spd > 0.0f);
+        }
+        return;
+    }
+
+    // 无可用 WENC：限速 + 固定短时间后硬 ESTOP（不自动回退）
+    _range_dist_baseline_valid = false;
+    _range_speed_limit_active = (_rf_lim_spd > 0.0f);
     if (_range_unsafe_since_ms == 0) {
         _range_unsafe_since_ms = now;
         return;
     }
-    if (now - _range_unsafe_since_ms < RANGE_SAFE_DEBOUNCE_MS) {
-        return;
+    const uint32_t gap_ms = MAX(uint32_t(_rf_gap_ms), 50U);
+    if ((now - _range_unsafe_since_ms) >= gap_ms) {
+        _range_speed_limit_active = false;
+        _fault_flags |= FAULT_RANGE_SAFE;
+        enter_estop("VG_SOLAR: ESTOP rangefinder");
     }
-
-    _fault_flags |= FAULT_RANGE_SAFE;
-    enter_estop("VG_SOLAR: ESTOP rangefinder");
-#else
-    _fault_flags |= FAULT_RANGE_SAFE;
-    enter_estop("VG_SOLAR: ESTOP rangefinder");
 #endif
 }
 
@@ -903,6 +1263,8 @@ void ModeVGSolar::set_turn_phase(TurnPhase phase)
         gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN lowering suction");
         break;
     case TurnPhase::TURNING:
+        // 停车阶段速度环 I 项清掉，避免切入差速时前冲
+        attitude_control.relax_I();
         gcs().send_text(MAV_SEVERITY_INFO, "VG_SOLAR: TURN rotating");
         break;
     case TurnPhase::RAISE_SUCTION:
@@ -911,6 +1273,41 @@ void ModeVGSolar::set_turn_phase(TurnPhase phase)
     default:
         break;
     }
+}
+
+bool ModeVGSolar::turn_wheel_encoders_usable() const
+{
+    const AP_WheelEncoder *wenc = AP::wheelencoder();
+    if (wenc == nullptr) {
+        return false;
+    }
+    for (uint8_t i = 0; i < wenc->num_sensors(); i++) {
+        if (wenc->enabled(i) && wenc->healthy(i)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ModeVGSolar::wheels_nearly_stopped() const
+{
+    // 无可用 WENC：交给 stop_vehicle / ATC 地速判据
+    if (!turn_wheel_encoders_usable()) {
+        return true;
+    }
+
+    const AP_WheelEncoder *wenc = AP::wheelencoder();
+    const float stop_speed = attitude_control.get_stop_speed();
+    for (uint8_t i = 0; i < wenc->num_sensors(); i++) {
+        if (!wenc->enabled(i) || !wenc->healthy(i)) {
+            continue;
+        }
+        const float speed_mps = fabsf(wenc->get_rate(i) * wenc->get_wheel_radius(i));
+        if (speed_mps > stop_speed) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void ModeVGSolar::log_turn_event(uint8_t action, uint8_t accepted, uint8_t reject_reason) const
@@ -1050,7 +1447,7 @@ void ModeVGSolar::try_recover_safety_hold()
 }
 
 // 转弯序列（NCU 0x02）
-// 阶段：停车 → 等稳 500ms → lower 吸盘 → 原地/行进转弯 → raise 吸盘 → 回待机
+// 阶段：清运动状态 → WENC/地速停车(防抖) → 等稳 500ms(持续抱刹) → lower → 原地/行进转弯 → raise → 待机
 bool ModeVGSolar::start_turn(const TurnData &cmd)
 {
     auto &cc = rover.companion_computer;
@@ -1091,12 +1488,17 @@ bool ModeVGSolar::start_turn(const TurnData &cmd)
     AP::suction_cup().unfreeze();
     _turn_frozen = false;
 
+    // 进转弯前先清 YAWRATE/速度环残留，避免 STOPPING 带着旧目标滑行
+    clear_speed_motion_state();
+
     _vg_submode = VGSubMode::TURN;
     _turn_direction = cmd.direction;
     _turn_mode_type = cmd.turn_mode;
     _turn_target_angle_deg = cmd.target_angle * 0.01f;
     _turn_angular_vel_dps = MAX(cmd.angular_vel * 0.01f, 1.0f);
     _turn_phase = TurnPhase::STOPPING;
+    _turn_phase_start_ms = AP_HAL::millis();
+    _turn_wheel_stop_since_ms = 0;
     _turn_accumulated_deg = 0.0f;
     _turn_timeout_aborted = false;
 
@@ -1124,17 +1526,34 @@ void ModeVGSolar::update_turn()
     switch (_turn_phase) {
 
     case TurnPhase::STOPPING: {
-        // 减速至零速后进入等待
-        const bool stopped = stop_vehicle();
-        if (stopped) {
-            set_turn_phase(TurnPhase::WAIT_STOPPED);
-            _turn_phase_start_ms = now;
+        // 持续刹车；有健康 WENC 时以轮速为准，否则仍用 stop_vehicle 地速判据
+        const bool ahrs_stopped = stop_vehicle();
+        const bool candidate = turn_wheel_encoders_usable()
+                               ? wheels_nearly_stopped()
+                               : ahrs_stopped;
+        if (candidate) {
+            if (_turn_wheel_stop_since_ms == 0) {
+                _turn_wheel_stop_since_ms = now;
+            } else if ((now - _turn_wheel_stop_since_ms) >= TURN_WHEEL_STOP_DEBOUNCE_MS) {
+                attitude_control.relax_I();
+                set_turn_phase(TurnPhase::WAIT_STOPPED);
+                _turn_phase_start_ms = now;
+                _turn_wheel_stop_since_ms = 0;
+            }
+        } else {
+            _turn_wheel_stop_since_ms = 0;
         }
         break;
     }
 
     case TurnPhase::WAIT_STOPPED: {
-        // 停稳 500ms 后再放吸盘，避免惯性滑动
+        // 等稳期间继续抱刹；轮速又起来则退回 STOPPING
+        stop_vehicle();
+        if (turn_wheel_encoders_usable() && !wheels_nearly_stopped()) {
+            set_turn_phase(TurnPhase::STOPPING);
+            _turn_wheel_stop_since_ms = 0;
+            break;
+        }
         if (now - _turn_phase_start_ms > 500) {
             set_turn_phase(TurnPhase::LOWER_SUCTION);
             _turn_phase_start_ms = now;
@@ -1143,6 +1562,8 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::LOWER_SUCTION: {
+        // 放盘期间持续停车，避免「气压已动、履带还在转」
+        stop_vehicle();
         // 异步 lower；is_lowered() 后进入 TURNING（motion_state=0x03）
         if (!scup.is_busy() && !scup.is_lowered()) {
             if (!scup.lower()) {
@@ -1201,6 +1622,8 @@ void ModeVGSolar::update_turn()
     }
 
     case TurnPhase::RAISE_SUCTION: {
+        // 抬盘期间继续抱刹
+        stop_vehicle();
         // 异步 raise；is_raised() 后 complete_turn() 回待机
         // raise() 拒绝 _frozen：若仍冻结则先 unfreeze（与 release_safety_hold_suction 一致）
         if (!scup.is_busy() && !scup.is_raised()) {

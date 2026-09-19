@@ -720,6 +720,10 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     AP_SUBGROUPINFO(esc_telem_2bld6010, "BESC_", 61, ParametersG2, AP_ESC_Telem_2BLD6010),
 #endif
 
+    // @Group: BRUSH_
+    // @Path: ../libraries/AP_Brush/AP_Brush.cpp
+    AP_SUBGROUPINFO(brush, "BRUSH_", 62, ParametersG2, AP_Brush),
+
     AP_GROUPEND
 };
 

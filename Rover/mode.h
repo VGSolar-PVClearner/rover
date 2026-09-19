@@ -1266,8 +1266,16 @@ private:
         RAISE_SUCTION,
     };
 
+    // 超声掉边自动回退：刹停 → 反向走 (D+5cm) → 成功待机 / 失败 ESTOP
+    enum class RangeRecoverPhase : uint8_t {
+        IDLE = 0,
+        STOPPING,
+        REVERSING,
+    };
+
     VGSubMode _vg_submode;
     TurnPhase _turn_phase;
+    RangeRecoverPhase _range_recover_phase;
 
     float _target_speed_ms;
     float _target_yaw_cd;
@@ -1298,10 +1306,15 @@ private:
     // 非零速度帧时刻；0=看门狗关闭。仅运动中丢控超时停车，不置 bit7
     uint32_t _last_ncu_cmd_ms;
     uint32_t _turn_phase_start_ms;
+    // STOPPING：轮速持续低于阈值的起始时刻；0=尚未进入候选停稳
+    uint32_t _turn_wheel_stop_since_ms;
     bool _turn_frozen;  // 安全事件后暂停转弯阶段推进
     // 运动丢控触发 SAFETY_HOLD_NCU_COMM 后，需再收到 NCU 指令才允许自动恢复吸盘
     bool _await_ncu_after_lost_motion;
     bool _turn_timeout_aborted;  // 转角超时已写 NTRN Abort，抬盘完成不再写 Done
+
+    // 转弯停车：WENC 线速度低于 ATC_STOP_SPEED 后需再保持该时长才离开 STOPPING
+    static constexpr uint32_t TURN_WHEEL_STOP_DEBOUNCE_MS = 200;
 
     // 倾角/运动丢控触发的吸盘保持（可叠加）；try_recover_safety_hold() 统一恢复
     static constexpr uint8_t SAFETY_HOLD_TILT     = 1 << 0;
@@ -1317,10 +1330,33 @@ private:
     AP_Float _cruise_speed_default;
     AP_Float _turn_timeout;
     AP_Float _turn_max_speed;
-    AP_Int16 _rf_safe_max_cm;  // 安全带上限 cm（含）：距离 ≤ 此值正常，> 或无效则不正常
+    AP_Int16 _rf_safe_max_cm;  // 贴板正常上限 cm（含）：≤ 且 Good 为正常
+    AP_Int16 _rf_gap_cm;       // 有 WENC：异常后允许多走多远仍算过缝（cm，含余量）
+    AP_Int16 _rf_gap_ms;       // 无 WENC：异常持续超过该 ms → 硬 ESTOP
+    AP_Int16 _rf_rcv_ms;       // 掉边回退腿最大时长 ms
+    AP_Float _rf_lim_spd;      // 异常且未超 GAP：|速度|上限 m/s；0=不限速
 
-    static constexpr uint32_t RANGE_SAFE_DEBOUNCE_MS = 100;
-    uint32_t _range_unsafe_since_ms;
+    // 超声异常跟踪 / 掉边回退
+    uint32_t _range_unsafe_since_ms;       // 无 WENC 时间窗起点；0=未在计时
+    uint32_t _range_recover_start_ms;      // 当前回退阶段起点
+    uint32_t _range_stop_debounce_ms;      // 回退前刹停防抖
+    float _range_abnormal_cm;              // 异常期间已走 cm
+    float _range_reverse_cm;               // 目标回退 cm（D+5）
+    int8_t _range_travel_sign;             // 异常期行驶方向：+1 前进 / -1 后退
+    bool _range_dist_baseline_valid;
+    bool _range_rev_baseline_valid;
+    bool _range_speed_limit_active;        // 过缝窗口内限速
+    float _range_dist0_m[2];               // 异常起点左右轮 get_distance
+    float _range_rev_dist0_m[2];           // 回退起点左右轮 get_distance
+
+    // 回退线速度 m/s；回退目标额外余量 cm
+    static constexpr float RANGE_RECOVER_SPEED_MS = 0.30f;
+    static constexpr float RANGE_RECOVER_EXTRA_CM = 5.0f;
+    static constexpr uint32_t RANGE_RECOVER_STOP_TIMEOUT_MS = 2000;
+    // 回退走完目标距离后，贴板 Good 需再保持该时长才算成功（防超声闪一下）
+    static constexpr uint32_t RANGE_RECOVER_ON_PANEL_MS = 300;
+
+    uint32_t _range_on_panel_since_ms;  // 回退到位后 Good 消抖；0=未在贴板
 
     void read_companion_commands();
     void update_standby();
@@ -1336,6 +1372,19 @@ private:
     void check_ncu_timeout();
     void check_tilt_safety();
     void check_rangefinder_safety();
+    bool rangefinder_channel_unsafe(enum Rotation orientation) const;
+    bool rangefinder_on_panel() const;
+    bool range_recover_active() const { return _range_recover_phase != RangeRecoverPhase::IDLE; }
+    void range_reset_abnormal_tracking();
+    void range_capture_wheel_baseline(float dest_m[2]) const;
+    float range_travel_cm_from_baseline(const float baseline_m[2]) const;
+    void range_update_travel_sign();
+    void apply_range_abnormal_speed_limit();
+    void begin_range_recover(float abnormal_cm);
+    void range_enter_reversing(uint32_t now_ms);
+    void update_range_recover();
+    void complete_range_recover();
+    void fail_range_recover_to_estop(const char *gcs_msg);
     void try_recover_safety_hold();
     bool tilt_within_limit() const;
     void enter_safety_hold(uint8_t reason_bit);
@@ -1347,6 +1396,9 @@ private:
     void complete_turn();
     void set_turn_phase(TurnPhase phase);
     void log_turn_event(uint8_t action, uint8_t accepted, uint8_t reject_reason) const;
+    // 有健康 WENC 时：左右轮 |rate*radius| 均 ≤ ATC_STOP_SPEED；无 WENC 则返回 true（退回 stop_vehicle）
+    bool wheels_nearly_stopped() const;
+    bool turn_wheel_encoders_usable() const;
     // 未解锁：停刷、吸盘释放/安全位，中止 TURN/NAV/YAW 运动
     void apply_disarmed_actuator_safety();
     // 清零速度/偏航率目标并切 ModeGuided 到 Stop，避免旧目标残留

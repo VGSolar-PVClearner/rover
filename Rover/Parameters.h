@@ -16,6 +16,7 @@
 #include <AP_WindVane/AP_WindVane.h>
 #include <AP_SuctionCup/AP_SuctionCup.h>
 #include <AP_SuctionPressure/AP_SuctionPressure.h>
+#include <AP_Brush/AP_Brush.h>
 #include <AP_ESC_Telem/AP_ESC_Telem_config.h>
 #if AP_ESC_TELEM_2BLD6010_ENABLED
 #include <AP_ESC_Telem/AP_ESC_Telem_2BLD6010.h>
@@ -451,6 +452,7 @@ public:
 
     AP_SuctionCup suction_cup;
     AP_SuctionPressure suction_pressure;
+    AP_Brush brush;
 
 #if AP_ESC_TELEM_2BLD6010_ENABLED
     AP_ESC_Telem_2BLD6010 esc_telem_2bld6010;
